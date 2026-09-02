@@ -451,7 +451,7 @@
   // ハッシュタグの本数はプラットフォームごとに変える（2026-09-02決定）：
   // Instagramは説明少なめ・ハッシュタグ多め、Xは説明多め（現状維持）・ハッシュタグ少なめ。
   // どちらもハッシュタグは本文の最後（文末）に置く。
-  const IG_HASHTAG_COUNT = 10;
+  const IG_HASHTAG_COUNT = 5; // Instagramは公式上限30だが、少数の的確なタグの方が伸びやすいとの意見に合わせて5に（2026-09-02変更）
   const X_HASHTAG_COUNT = 3;
 
   // 文字数上限は⚙️設定画面から変更できる（settings.xCharLimit / settings.igCharLimit）。
@@ -499,7 +499,7 @@
   // （タイトル・URL・ハッシュタグは削らない）。
   function buildInstagramCaption(c){
     const tags = c.hashtags.slice(0, IG_HASHTAG_COUNT).join(' ');
-    const header = `${c.emoji || ''} ${c.name}\n🔗 ${c.url}`;
+    const header = `${c.emoji || ''} ${c.name}\n\n🔗 ${c.url}`; // タイトルとリンクの間を1行空ける（2026-09-02変更）
     const limit = getIgLimit();
     const fixedLen = header.length + 2 + 2 + tags.length; // \n\n の2回分
     const budget = limit - fixedLen;
@@ -581,7 +581,12 @@
 
   // Instagram投稿用の枠画像（設定でアップロード）。未設定ならnull＝枠なしで保存。
   // 画像自体はPropertiesServiceの容量に乗らないため、本番でもこの端末のブラウザ側保存を想定。
+  // 【2026-09-02修正】これまでページを再読み込みすると設定した枠が消えてしまうバグがあった
+  // （変数に持つだけでどこにも保存していなかったため）。localStorageに保存し、次回開いたときも
+  // 復元されるようにした。
+  const FRAME_STORAGE_KEY = 'ig_frame_data_url';
   let frameDataUrl = null;
+  try { frameDataUrl = localStorage.getItem(FRAME_STORAGE_KEY) || null; } catch (e) { /* プライベートブラウズ等では無視 */ }
 
   function candidateCardHtml(c){
     const d = state.decisions[c.id];
@@ -810,6 +815,7 @@
     const reader = new FileReader();
     reader.onload = () => {
       frameDataUrl = reader.result;
+      try { localStorage.setItem(FRAME_STORAGE_KEY, frameDataUrl); } catch (e) { showToast('枠画像の保存容量が大きすぎるかもしれません（この端末では次回消える可能性があります）', 'skip'); }
       renderFramePreview();
       showToast('枠画像を設定しました', 'success');
     };
@@ -819,6 +825,7 @@
 
   function clearFrame(){
     frameDataUrl = null;
+    try { localStorage.removeItem(FRAME_STORAGE_KEY); } catch (e) { /* 無視 */ }
     const input = document.getElementById('set-frame');
     if (input) input.value = '';
     renderFramePreview();
