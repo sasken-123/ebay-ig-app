@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>投稿候補チェック（Instagram/X）</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+  :root{
+    --paper:#F2F1EC;
+    --card:#FFFFFF;
+    --ink:#1E2530;
+    --ink-soft:#5B6472;
+    --line:#DCD7C8;
+    --amber:#C57F2B;
+    --amber-bg:#F6E8D2;
+    --green:#3E7A56;
+    --green-bg:#DFEEE3;
+    --blue:#2A5C99;
+    --blue-bg:#DCE6F2;
+    --red:#AE3B3B;
+    --red-bg:#F5DEDE;
+    --gray-bg:#E7E5DD;
+    --radius:6px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;overscroll-behavior:none;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans JP', sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden;}
+  .mono{font-family:'IBM Plex Mono', monospace;}
+
+  #app{
+    max-width:480px;margin:0 auto;
+    height:100vh;height:100dvh;
+    padding:8px 12px calc(8px + env(safe-area-inset-bottom));
+    display:flex;flex-direction:column;gap:6px;
+    overflow:hidden;
+  }
+
+  .ledger-head{display:flex;justify-content:space-between;align-items:center;flex:0 0 auto;border-bottom:2px solid var(--ink);padding-bottom:5px;gap:8px;}
+  .ledger-head h1{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;letter-spacing:0.3px;margin:0;text-transform:uppercase;line-height:1;}
+  .ledger-head .sub{font-size:9.5px;color:var(--ink-soft);letter-spacing:0.6px;text-transform:uppercase;margin-top:2px;}
+  .gear-btn{background:var(--card);border:1px solid var(--line);border-radius:50%;width:28px;height:28px;flex-shrink:0;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;}
+
+  .nav-row{flex:0 0 auto;display:flex;align-items:center;gap:8px;}
+  .nav-chev{background:var(--card);border:1px solid var(--line);color:var(--ink-soft);width:26px;height:26px;border-radius:50%;font-size:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;}
+  .nav-chev:disabled{opacity:0.3;}
+  .dots{display:flex;gap:4px;flex:1;justify-content:center;align-items:center;}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--line);}
+  .dot.done-posted{background:var(--green);}
+  .dot.done-skipped{background:var(--ink-soft);}
+  .dot.current{background:var(--amber);transform:scale(1.4);}
+  .pos-label{font-size:10px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+
+  .stage{position:relative;flex:1 1 auto;min-height:0;display:flex;align-items:stretch;touch-action:pan-y;}
+  .card-wrap{position:relative;width:100%;user-select:none;min-height:0;}
+  .candidate{height:100%;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;}
+  .candidate.is-posted{border-left-color:var(--green);}
+  .candidate.is-skipped{border-left-color:var(--ink-soft);}
+
+  .candidate-head{flex:0 0 auto;background:var(--gray-bg);padding:5px 10px;display:flex;justify-content:space-between;align-items:center;gap:5px;border-bottom:1px solid var(--line);}
+  .stamps{display:flex;gap:4px;flex-wrap:wrap;}
+  .stamp{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:9.5px;padding:1px 6px;border-radius:3px;white-space:nowrap;}
+  .stamp.st-days{background:var(--blue-bg);color:var(--blue);}
+  .stamp.st-views{background:var(--amber-bg);color:#8A5A1E;}
+  .stamp.st-genre{background:var(--gray-bg);color:var(--ink-soft);}
+  .stamp.st-result{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;font-size:10px;padding:1px 7px;border-radius:3px;}
+  .stamp.st-result.posted{background:var(--green-bg);color:var(--green);}
+  .stamp.st-result.skipped{background:var(--gray-bg);color:var(--ink-soft);}
+
+  .candidate-body{flex:1 1 auto;min-height:0;padding:9px 10px;display:flex;flex-direction:column;gap:7px;}
+
+  .thumb-row{flex:0 0 auto;display:flex;gap:9px;align-items:center;}
+  .thumb{width:48px;height:48px;border-radius:6px;object-fit:cover;flex-shrink:0;background:var(--gray-bg);border:1px solid var(--line);}
+  .thumb-info{min-width:0;flex:1;}
+  .item-name{font-weight:700;font-size:12.5px;line-height:1.3;margin:0 0 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .item-price{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink);}
+
+  .platform-toggle{flex:0 0 auto;display:flex;background:var(--gray-bg);border-radius:20px;padding:2px;gap:2px;}
+  .platform-toggle button{flex:1;background:transparent;color:var(--ink-soft);border-radius:18px;padding:6px 8px;font-size:11.5px;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:0.3px;text-transform:uppercase;}
+  .platform-toggle button.active.ig{background:linear-gradient(135deg,#F6E8D2,#FBDFE4,#DCE6F2);color:#7A3B63;}
+  .platform-toggle button.active.x{background:var(--ink);color:#fff;}
+
+  .account-banner{flex:0 0 auto;font-size:11px;padding:6px 9px;border-radius:6px;background:var(--blue-bg);color:var(--blue);font-weight:600;display:flex;align-items:center;gap:5px;}
+  .account-banner.empty{background:var(--amber-bg);color:#8A5A1E;font-weight:500;}
+
+  .caption-box{flex:1 1 auto;min-height:0;border:1px solid var(--line);border-radius:6px;background:#FDFCFA;overflow:hidden;}
+  .caption-box-text{height:100%;overflow-y:auto;padding:8px 9px;font-size:11.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap;}
+  .caption-inline-tools{float:right;display:flex;align-items:center;gap:6px;margin:0 0 5px 8px;}
+  .char-count{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink-soft);}
+  .char-count.over{color:var(--red);font-weight:700;}
+  .mini-copy{background:var(--gray-bg);color:var(--ink);border:none;border-radius:6px;width:22px;height:22px;padding:0;font-size:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
+  .mini-copy.just-copied{background:var(--green-bg);color:var(--green);}
+
+  .caption-actions{flex:0 0 auto;display:flex;gap:7px;}
+  .link-btn{flex:1;text-align:center;background:var(--gray-bg);color:var(--ink);padding:9px 8px;font-size:12px;font-weight:600;border-radius:var(--radius);text-decoration:none;border:none;font-family:'IBM Plex Sans JP',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;}
+  .link-btn.ig{background:linear-gradient(135deg,#F6E8D2,#FBDFE4,#DCE6F2);color:#7A3B63;}
+  .link-btn.x{background:var(--ink);color:#fff;}
+  .link-btn.img-save{background:var(--blue-bg);color:var(--blue);}
+  .link-btn:hover, .mini-copy:hover{opacity:0.85;}
+
+  .decision-row{flex:0 0 auto;}
+  .btn-row{display:flex;gap:7px;}
+  button{font-family:'IBM Plex Sans JP',sans-serif;cursor:pointer;border:none;border-radius:var(--radius);padding:10px 12px;font-size:12.5px;font-weight:600;transition:opacity .15s ease;}
+  button:hover{opacity:0.85;}
+  button:disabled{cursor:default;opacity:0.4 !important;}
+  .btn-approve{background:var(--ink);color:#fff;flex:2;}
+  .btn-skip{background:var(--card);color:var(--ink-soft);border:1px solid var(--line);flex:1;}
+  .decided-note{font-size:11px;color:var(--ink-soft);font-style:italic;text-align:center;padding:8px 0;}
+
+  .empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--ink-soft);border:1px dashed var(--line);border-radius:8px;}
+  .empty-state .big{font-size:28px;margin-bottom:4px;}
+  .empty-state p{font-size:12.5px;margin:0;}
+
+  #toast-wrap{position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:6px;align-items:center;width:calc(100% - 24px);max-width:456px;}
+  .toast{background:var(--ink);color:#fff;padding:9px 14px;border-radius:6px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,0.25);opacity:0;transform:translateY(-8px);transition:opacity .2s ease, transform .2s ease;text-align:center;}
+  .toast.show{opacity:1;transform:translateY(0);}
+  .toast.success{background:var(--green);}
+  .toast.skip{background:var(--ink-soft);}
+
+  #settings-overlay{display:none;position:fixed;inset:0;background:rgba(20,24,30,0.55);align-items:center;justify-content:center;padding:16px;z-index:150;}
+  #settings-overlay.open{display:flex;}
+  .settings-box{background:var(--card);border-radius:10px;padding:18px 20px 20px;max-width:400px;width:100%;max-height:90vh;overflow-y:auto;}
+  .settings-box h2{font-family:'Barlow Condensed',sans-serif;font-size:20px;text-transform:uppercase;margin:0 0 4px;}
+  .settings-box .desc{font-size:11.5px;color:var(--ink-soft);margin-bottom:16px;line-height:1.5;}
+  .settings-field{margin-bottom:14px;}
+  .settings-field label{display:block;font-size:11px;color:var(--ink-soft);letter-spacing:0.3px;margin-bottom:5px;text-transform:uppercase;}
+  .settings-field .inline-input{display:flex;align-items:center;gap:8px;}
+  .settings-field input[type=number]{width:90px;padding:8px 10px;border:1px solid var(--line);border-radius:5px;font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--ink);}
+  .settings-field .unit{font-size:12.5px;color:var(--ink-soft);}
+  .settings-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
+  .btn-ghost2{background:var(--card);color:var(--ink);border:1px solid var(--line);}
+  .btn-primary2{background:var(--ink);color:#fff;}
+  .settings-note{font-size:10.5px;color:var(--ink-soft);background:var(--gray-bg);border-radius:5px;padding:8px 10px;margin-top:4px;line-height:1.5;}
+
+  .frame-field .desc-sm, .settings-field .desc-sm{font-size:10.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;}
+  .account-input-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+  .account-input-row:last-child{margin-bottom:0;}
+  .account-input-icon{flex-shrink:0;width:28px;text-align:center;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;background:var(--gray-bg);color:var(--ink-soft);border-radius:5px;padding:6px 0;}
+  .account-input-row input[type=text]{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:5px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink);}
+  .frame-upload-row input[type=file]{font-size:11px;max-width:100%;}
+  .frame-preview-wrap{margin-top:9px;}
+  .frame-preview-wrap img{max-width:110px;max-height:110px;border:1px solid var(--line);border-radius:6px;display:block;background:repeating-conic-gradient(#e8e6df 0% 25%, #f5f4ef 0% 50%) 0 0/14px 14px;}
+  .frame-preview-empty{font-size:11px;color:var(--ink-soft);}
+  .btn-frame-clear{margin-top:8px;font-size:11px;padding:6px 10px;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div class="ledger-head">
+    <div>
+      <h1>投稿候補チェック</h1>
+      <div class="sub">eBay → Instagram / X</div>
+    </div>
+    <button class="gear-btn" onclick="openSettings()" title="抽出条件を変更">⚙️</button>
+  </div>
+
+  <div class="nav-row">
+    <button class="nav-chev" id="btn-prev" onclick="goPrev()">‹</button>
+    <div class="dots" id="dots"></div>
+    <span class="pos-label" id="pos-label">1/-</span>
+    <button class="nav-chev" id="btn-next" onclick="goNext()">›</button>
+  </div>
+
+  <div class="stage">
+    <div class="card-wrap" id="card-wrap">
+      <!-- カードはJSで描画 -->
+    </div>
+  </div>
+
+</div>
+
+<div id="toast-wrap"></div>
+
+<div id="settings-overlay">
+  <div class="settings-box">
+    <h2>抽出条件の設定</h2>
+    <div class="desc">この画面での変更は、次回の候補抽出（毎日のGAS実行時）から反映されます。</div>
+
+    <div class="settings-field">
+      <label>出品からの経過日数がこれ以内の商品を対象にする</label>
+      <div class="inline-input">
+        <input type="number" id="set-days" min="0" step="1">
+        <span class="unit">日以内</span>
+      </div>
+    </div>
+
+    <div class="settings-field">
+      <label>view数（現在の累計）がこれ以上の商品を対象にする</label>
+      <div class="inline-input">
+        <input type="number" id="set-views" min="0" step="1">
+        <span class="unit">view 以上</span>
+      </div>
+    </div>
+
+    <div class="settings-field">
+      <label>1回の承認画面に出す候補数</label>
+      <div class="inline-input">
+        <input type="number" id="set-count" min="1" max="10" step="1">
+        <span class="unit">件</span>
+      </div>
+    </div>
+
+    <div class="settings-field">
+      <label>この日数、操作がなければ自動取得を停止する</label>
+      <div class="desc-sm">この期間ずっとアプリを開かなかった場合、eBay・AIの自動取得を一時停止します（課金を抑えるため）。次にこのアプリを開いた時点で自動的に再開します。</div>
+      <div class="inline-input">
+        <input type="number" id="set-inactivity" min="1" step="1">
+        <span class="unit">日</span>
+      </div>
+    </div>
+
+    <div class="settings-field">
+      <label>投稿先アカウント（誤投稿防止の確認表示用）</label>
+      <div class="desc-sm">承認画面のキャプション上に「このアカウントで投稿してください」という確認表示を出すための登録です。実際にどのアカウントで開くかを強制するものではなく、投稿前に目視で確認するためのリマインダーです。</div>
+      <div class="account-input-row">
+        <span class="account-input-icon">IG</span>
+        <input type="text" id="set-ig-account" placeholder="@shop_instagram_account">
+      </div>
+      <div class="account-input-row">
+        <span class="account-input-icon">X</span>
+        <input type="text" id="set-x-account" placeholder="@shop_x_account">
+      </div>
+    </div>
+
+    <div class="settings-field frame-field">
+      <label>Instagram投稿用の画像に重ねる枠（PNG・透過推奨）</label>
+      <div class="desc-sm">投稿画像を保存するときに、この枠を商品写真の上に自動で重ねます。未設定の間は枠なしで保存されます。あとから何度でも差し替え可能。Xの投稿には画像も枠も使用しません。</div>
+      <div class="frame-upload-row">
+        <input type="file" id="set-frame" accept="image/png" onchange="handleFrameUpload(event)">
+      </div>
+      <div class="frame-preview-wrap" id="frame-preview-wrap"><span class="frame-preview-empty">未設定（枠なしで保存されます）</span></div>
+      <button type="button" class="btn-ghost2 btn-frame-clear" id="btn-frame-clear" onclick="clearFrame()" style="display:none;">枠を削除</button>
+    </div>
+
+    <div class="settings-note">
+      抽出条件・投稿先アカウント名はGAS Web Appに送信し、PropertiesServiceに保存されます（次回の自動抽出から反映）。枠画像はサイズの都合上PropertiesServiceには保存できないため、この端末のブラウザ内にのみ保存されます。別の端末（PCとスマホなど）を使う場合は、それぞれの端末で枠画像を再アップロードしてください。
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn-ghost2" onclick="closeSettings()">キャンセル</button>
+      <button class="btn-primary2" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ------------------------------------------------------------------
+  // GAS Web App との接続
+  // 投稿本文（Recommend point／キャプション）はすべて英語。
+  // アプリの操作UI（ボタン等）は運用者向けなので日本語のまま。
+  // ------------------------------------------------------------------
+  const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwMDq5NQvhP9herNQrHbW0PDsUuew77BBY-_bzOATj8GIoYobNSkpoaOxKsyMGF0a3S/exec';
+
+  // ページ読み込み直後の初期値。実際の値はloadCandidates()でGAS Web Appから上書きされる。
+  let settings = {
+    days: 10, minViews: 300, count: 3, // days: 出品からこの日数「以内」のものだけを対象にする／minViews: 累計view数の下限
+    igAccount: '', // 投稿先Instagramアカウント（誤投稿防止の確認表示用。空なら未設定扱い）
+    xAccount: '',  // 投稿先Xアカウント（同上）
+    inactivityStopDays: 14 // この日数、操作がなければ自動取得を停止する
+  };
+
+  let CANDIDATES = [];
+  let loadState = 'loading'; // 'loading' | 'ready' | 'error'
+
+  // GASの doGet が返す候補（itemId/name/price/categoryName/imageUrl/itemUrl/description/views/
+  // recommendPoint/_listedDaysAgo）を、このアプリの描画コードが使う形に変換する。
+  // hook（短いひとこと）は専用フィールドが無いため、recommendPointをそのまま流用している。
+  // hashtagsはGAS側でまだ生成していないため、いったん空配列（今後AI生成を足す余地あり）。
+  function mapCandidate(raw){
+    const priceText = (raw.price === null || raw.price === undefined || isNaN(raw.price))
+      ? '$-' : '$' + Number(raw.price).toFixed(2);
+    return {
+      id: raw.itemId,
+      name: raw.name || '(no title)',
+      genre: raw.categoryName || '未分類',
+      price: priceText,
+      listedDaysAgo: raw._listedDaysAgo != null ? raw._listedDaysAgo : '-',
+      views: raw.views || 0,
+      image: raw.imageUrl || '',
+      emoji: '🏷️',
+      url: raw.itemUrl || ('https://www.ebay.com/itm/' + raw.itemId),
+      hook: raw.recommendPoint || '',
+      point: raw.recommendPoint || '',
+      hashtags: []
+    };
+  }
+
+  async function loadCandidates(){
+    loadState = 'loading';
+    renderLoadState();
+    try {
+      const res = await fetch(GAS_WEB_APP_URL);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      CANDIDATES = (data.candidates || []).map(mapCandidate);
+      if (data.settings){
+        settings = Object.assign({}, settings, data.settings);
+      }
+      state.index = 0;
+      state.decisions = {};
+      loadState = 'ready';
+      render();
+    } catch (err) {
+      loadState = 'error';
+      renderLoadState();
+    }
+  }
+
+  function renderLoadState(){
+    const wrap = document.getElementById('card-wrap');
+    if (!wrap) return;
+    if (loadState === 'loading'){
+      wrap.innerHTML = `<div class="empty-state"><div class="big">⏳</div><p>候補を読み込んでいます…</p></div>`;
+    } else if (loadState === 'error'){
+      wrap.innerHTML = `<div class="empty-state"><div class="big">⚠️</div><p>候補の読み込みに失敗しました。<br>通信環境を確認して、もう一度開き直してください。</p></div>`;
+    }
+  }
+
+  // 投稿文はInstagram用・X(Twitter)用をそれぞれ別フォーマットで自動生成する。
+  // Recommend point / hook は補足メモではなく、実際に投稿される本文の一部としてそのまま使われる。
+
+  // Instagram：タイトル・出品URL・ひとこと・ハッシュタグのシンプル構成。
+  // ※Instagramの通常投稿はキャプション内URLをリンク化しないため、テキスト表示のみ。
+  function buildInstagramCaption(c){
+    return `${c.emoji || ''} ${c.name}\n🔗 ${c.url}\n\n${c.hook}\n\n${c.hashtags.join(' ')}`;
+  }
+
+  // X(Twitter)：全角2・半角1でカウントする公式ルールに合わせた重み付き文字数。
+  // URLはt.co短縮後、実際の文字数に関わらず一律23として計算する。
+  function xWeightedLength(str){
+    let len = 0;
+    for (const ch of str){
+      len += ch.charCodeAt(0) > 0x7F ? 2 : 1;
+    }
+    return len;
+  }
+  const X_LIMIT = 280;
+  const X_URL_WEIGHT = 23;
+
+  // X：見出し＋説明（Recommend point）＋その下にURL＋ハッシュタグ。280文字（重み付き）超は自動で省略。
+  // ※本文には商品価格を含めない（価格は画面上の参考表示のみ）。
+  function buildXCaption(c){
+    const header = `${c.emoji || ''} ${c.name}`;
+    const hashtagLine = c.hashtags.join(' ');
+    const fixedWeight =
+      xWeightedLength(header) + xWeightedLength('\n\n') +
+      xWeightedLength('\n\n') + X_URL_WEIGHT +
+      xWeightedLength('\n\n') + xWeightedLength(hashtagLine);
+    let budget = X_LIMIT - fixedWeight;
+
+    let point = c.point;
+    if (xWeightedLength(point) > budget){
+      let truncated = '';
+      for (const word of point.split(' ')){
+        const candidate = truncated ? truncated + ' ' + word : word;
+        if (xWeightedLength(candidate) + xWeightedLength('…') > budget) break;
+        truncated = candidate;
+      }
+      point = truncated + '…';
+    }
+
+    return { text: `${header}\n\n${point}\n\n${c.url}\n\n${hashtagLine}`, weight: fixedWeight + xWeightedLength(point) };
+  }
+
+  // Xの投稿画面をキャプション入りで開くWeb Intent URL（公式仕様：https://x.com/intent/tweet?text=...）
+  function buildXIntentUrl(c){
+    return 'https://x.com/intent/tweet?text=' + encodeURIComponent(buildXCaption(c).text);
+  }
+  const INSTAGRAM_HOME_URL = 'https://www.instagram.com/';
+
+  // ------------------------------------------------------------------
+  // 状態管理・描画
+  // ------------------------------------------------------------------
+  const state = {
+    index: 0,
+    platform: 'ig', // 'ig' | 'x'  -- 表示中プラットフォーム（候補を切り替えると ig に戻す）
+    decisions: {}   // { [id]: { decision: 'posted'|'skipped' } }
+  };
+
+  // Instagram投稿用の枠画像（設定でアップロード）。未設定ならnull＝枠なしで保存。
+  // 画像自体はPropertiesServiceの容量に乗らないため、本番でもこの端末のブラウザ側保存を想定。
+  let frameDataUrl = null;
+
+  function candidateCardHtml(c){
+    const d = state.decisions[c.id];
+    const decidedClass = d ? (d.decision === 'posted' ? 'is-posted' : 'is-skipped') : '';
+    const resultStamp = d
+      ? `<span class="stamp st-result ${d.decision}">${d.decision === 'posted' ? '投稿済み' : '見送り'}</span>`
+      : '';
+
+    const xCap = buildXCaption(c);
+    const overLimit = xCap.weight > X_LIMIT;
+    const p = state.platform;
+
+    const charCountHtml = p === 'x'
+      ? `<span class="char-count ${overLimit ? 'over' : ''}">${xCap.weight}/${X_LIMIT}</span>`
+      : '';
+    const captionText = p === 'ig' ? buildInstagramCaption(c) : xCap.text;
+
+    // 誤投稿防止：設定した投稿先アカウントを、キャプションを見ている間ずっと表示しておく。
+    // あくまで目視確認用のリマインダーで、実際にそのアカウントで開くことを技術的に強制するものではない。
+    const account = (p === 'ig' ? (settings.igAccount || '') : (settings.xAccount || '')).trim();
+    const accountLabel = p === 'ig' ? 'Instagram' : 'X';
+    const accountBanner = account
+      ? `<div class="account-banner">👤 <strong>${account}</strong> で投稿してください</div>`
+      : `<div class="account-banner empty">⚠️ ${accountLabel}の投稿先アカウント未設定（⚙️から登録できます）</div>`;
+
+    // Instagramは、投稿先アカウントを登録していればそのプロフィールURLを直接開く（未設定ならInstagramホーム）。
+    // ※プロフィールを開けるだけで、アプリ内のログインアカウントを自動で切り替えるものではない点に注意。
+    const igHandle = settings.igAccount.replace(/^@/, '').trim();
+    const igHref = igHandle ? `https://www.instagram.com/${encodeURIComponent(igHandle)}/` : INSTAGRAM_HOME_URL;
+
+    // 「開く」ボタンはクリックした瞬間にクリップボードへもコピーしてから遷移する
+    // （href/target=_blankはそのまま残すので、ブラウザの通常のリンク遷移として動く）
+    // 画像の保存はInstagram投稿のときだけ表示する（X投稿には画像を添付しない）。
+    const actions = p === 'ig'
+      ? `<a class="link-btn ig" data-id="${c.id}" data-platform="ig" href="${igHref}" target="_blank" rel="noopener" onclick="copyCaption(this,{silent:true})">🔗 コピーしてInstagramを開く</a><button type="button" class="link-btn img-save" data-id="${c.id}" onclick="saveImageForId(this.dataset.id)">🖼️ 画像を保存</button>`
+      : `<a class="link-btn x" data-id="${c.id}" data-platform="x" href="${buildXIntentUrl(c)}" target="_blank" rel="noopener" onclick="copyCaption(this,{silent:true})">🔗 コピーしてXを開く</a>`;
+
+    return `
+    <div class="candidate ${decidedClass}" id="card-${c.id}">
+      <div class="candidate-head">
+        <div class="stamps">
+          <span class="stamp st-genre">🏷️ ${c.genre}</span>
+          <span class="stamp st-days">出品${c.listedDaysAgo}日経過</span>
+          <span class="stamp st-views">${c.views.toLocaleString()} views</span>
+        </div>
+        ${resultStamp}
+      </div>
+
+      <div class="candidate-body">
+        <div class="thumb-row">
+          <img class="thumb" src="${c.image}" alt="${c.name}">
+          <div class="thumb-info">
+            <p class="item-name">${c.name}</p>
+            <div class="item-price mono">${c.price}</div>
+          </div>
+        </div>
+
+        <div class="platform-toggle">
+          <button class="${p==='ig'?'active ig':''}" onclick="togglePlatform('ig')">Instagram</button>
+          <button class="${p==='x'?'active x':''}" onclick="togglePlatform('x')">X</button>
+        </div>
+
+        ${accountBanner}
+
+        <div class="caption-box">
+          <div class="caption-box-text"><span class="caption-inline-tools">${charCountHtml}<button class="mini-copy" data-id="${c.id}" data-platform="${p}" onclick="copyCaption(this)" title="コピー">📋</button></span>${captionText}</div>
+        </div>
+
+        <div class="caption-actions">${actions}</div>
+
+        <div class="decision-row">
+          ${ d
+            ? `<div class="decided-note">${d.decision === 'posted' ? '投稿完了として記録しました' : '見送りました'}</div>`
+            : `<div class="btn-row">
+                 <button class="btn-approve" onclick="handlePosted('${c.id}')">投稿完了にする</button>
+                 <button class="btn-skip" onclick="handleSkip('${c.id}')">見送る</button>
+               </div>`
+          }
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function renderDots(){
+    const wrap = document.getElementById('dots');
+    wrap.innerHTML = CANDIDATES.map((c, i) => {
+      const d = state.decisions[c.id];
+      let cls = 'dot';
+      if (i === state.index) cls += ' current';
+      else if (d) cls += d.decision === 'posted' ? ' done-posted' : ' done-skipped';
+      return `<span class="${cls}"></span>`;
+    }).join('');
+  }
+
+  // btn: コピー起点の要素（📋アイコン、または「開く」リンク）。data-id/data-platformを読む。
+  // opts.silent: true の場合トースト文言を「開く」向けの短い一言にする（📋単体クリック時は通常の文言）
+  function copyCaption(btn, opts){
+    opts = opts || {};
+    const c = CANDIDATES.find(x => x.id === btn.dataset.id);
+    const platform = btn.dataset.platform;
+    const text = platform === 'ig' ? buildInstagramCaption(c) : buildXCaption(c).text;
+    const label = platform === 'ig' ? 'Instagram' : 'X';
+    const account = ((platform === 'ig' ? settings.igAccount : settings.xAccount) || '').trim();
+    const accountNote = account ? account + 'で' : '';
+    const msg = opts.silent ? label + '用の投稿文をコピーしました。' + accountNote + '貼り付けて投稿してください' : label + '用の投稿文をコピーしました';
+    const done = () => {
+      showToast(msg, 'success');
+      if (btn.classList.contains('mini-copy')){
+        btn.textContent = '✅';
+        btn.classList.add('just-copied');
+        setTimeout(() => { btn.textContent = '📋'; btn.classList.remove('just-copied'); }, 1200);
+      }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(() => showToast('コピーに失敗しました。手動で選択してコピーしてください', 'skip'));
+    } else {
+      showToast('この環境では自動コピーに未対応です。手動で選択してコピーしてください', 'skip');
+    }
+  }
+
+  function togglePlatform(p){
+    state.platform = p;
+    render();
+  }
+
+  // ------------------------------------------------------------------
+  // Instagram投稿用の画像を保存（商品写真 + 設定した枠をcanvasで合成）
+  // 枠が未設定の場合は商品写真そのものを保存する。
+  // ------------------------------------------------------------------
+  function saveImageForId(id){
+    const c = CANDIDATES.find(x => x.id === id);
+    if (c) compositeAndSaveImage(c);
+  }
+
+  function drawCover(ctx, img, w, h){
+    const ir = img.width / img.height, cr = w / h;
+    let sx = 0, sy = 0, sw = img.width, sh = img.height;
+    if (ir > cr){ sw = img.height * cr; sx = (img.width - sw) / 2; }
+    else { sh = img.width / cr; sy = (img.height - sh) / 2; }
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+  }
+
+  function compositeAndSaveImage(c){
+    const size = 1080; // Instagram正方形投稿を想定した書き出しサイズ
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    const productImg = new Image();
+    productImg.crossOrigin = 'anonymous';
+    productImg.onload = () => {
+      drawCover(ctx, productImg, size, size);
+      if (frameDataUrl){
+        const frameImg = new Image();
+        frameImg.onload = () => { ctx.drawImage(frameImg, 0, 0, size, size); finishSaveImage(canvas, true); };
+        frameImg.onerror = () => { showToast('枠画像の読み込みに失敗しました。枠なしで保存します', 'skip'); finishSaveImage(canvas, false); };
+        frameImg.src = frameDataUrl;
+      } else {
+        finishSaveImage(canvas, false);
+      }
+    };
+    productImg.onerror = () => showToast('商品画像の読み込みに失敗しました', 'skip');
+    productImg.src = c.image;
+  }
+
+  function finishSaveImage(canvas, framed){
+    canvas.toBlob(async blob => {
+      if (!blob){ showToast('画像の生成に失敗しました', 'skip'); return; }
+
+      // このプレビュー画面（Artifact）で開いている場合はdownloadsケーパビリティ経由で保存ダイアログを出す。
+      if (window.claude && typeof window.claude.use === 'function'){
+        try {
+          const downloads = await window.claude.use('downloads');
+          if (downloads){
+            await downloads.save({ filename: 'post-image.png', data: blob });
+            showToast(framed ? '画像を保存しました（枠あり）' : '画像を保存しました（枠は未設定）', 'success');
+            return;
+          }
+        } catch (err) {
+          if (err && err.code === 'declined'){ return; } // キャンセルは何もしない
+          // downloadsが使えない環境では下のフォールバックへ
+        }
+      }
+
+      // 通常のブラウザで開いている場合（ダウンロードしたHTMLファイルなど）のフォールバック。
+      // iOS Safari等は<a download>が効かない場合があるため、新規タブで開いて長押し保存を案内する。
+      const url = URL.createObjectURL(blob);
+      const opened = window.open(url, '_blank');
+      if (!opened){
+        const a = document.createElement('a');
+        a.href = url; a.download = 'post-image.png';
+        document.body.appendChild(a); a.click(); a.remove();
+      }
+      showToast(framed ? '画像を生成しました（枠あり）。新しいタブで長押しして保存してください' : '画像を生成しました（枠は未設定）。新しいタブで長押しして保存してください', 'success');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }, 'image/png');
+  }
+
+  // ------------------------------------------------------------------
+  // 設定：枠画像のアップロード／削除
+  // ------------------------------------------------------------------
+  function handleFrameUpload(e){
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      frameDataUrl = reader.result;
+      renderFramePreview();
+      showToast('枠画像を設定しました', 'success');
+    };
+    reader.onerror = () => showToast('枠画像の読み込みに失敗しました', 'skip');
+    reader.readAsDataURL(file);
+  }
+
+  function clearFrame(){
+    frameDataUrl = null;
+    const input = document.getElementById('set-frame');
+    if (input) input.value = '';
+    renderFramePreview();
+    showToast('枠画像を削除しました（枠なしで保存されます）', 'skip');
+  }
+
+  function renderFramePreview(){
+    const wrap = document.getElementById('frame-preview-wrap');
+    const clearBtn = document.getElementById('btn-frame-clear');
+    if (!wrap || !clearBtn) return;
+    if (frameDataUrl){
+      wrap.innerHTML = `<img src="${frameDataUrl}" alt="設定中の枠画像">`;
+      clearBtn.style.display = '';
+    } else {
+      wrap.innerHTML = `<span class="frame-preview-empty">未設定（枠なしで保存されます）</span>`;
+      clearBtn.style.display = 'none';
+    }
+  }
+
+  function render(){
+    const total = CANDIDATES.length;
+
+    if (total === 0){
+      document.getElementById('pos-label').textContent = '0/0';
+      document.getElementById('btn-prev').disabled = true;
+      document.getElementById('btn-next').disabled = true;
+      document.getElementById('card-wrap').innerHTML =
+        `<div class="empty-state"><div class="big">📭</div><p>本日の候補はありません。<br>明日の自動抽出をお待ちください。</p></div>`;
+      renderDots();
+      return;
+    }
+
+    document.getElementById('pos-label').textContent = (state.index + 1) + '/' + total;
+    document.getElementById('btn-prev').disabled = state.index <= 0;
+    document.getElementById('btn-next').disabled = state.index >= total - 1;
+
+    const allDone = Object.keys(state.decisions).length === total;
+    if (allDone){
+      document.getElementById('card-wrap').innerHTML =
+        `<div class="empty-state"><div class="big">✅</div><p>すべての候補を確認しました。<br>お疲れさまでした。</p></div>`;
+    } else {
+      const c = CANDIDATES[state.index];
+      document.getElementById('card-wrap').innerHTML = candidateCardHtml(c);
+    }
+
+    renderDots();
+  }
+
+  function goNext(){
+    if (state.index < CANDIDATES.length - 1){ state.index++; state.platform = 'ig'; render(); }
+  }
+  function goPrev(){
+    if (state.index > 0){ state.index--; state.platform = 'ig'; render(); }
+  }
+
+  function showToast(msg, cls){
+    const wrap = document.getElementById('toast-wrap');
+    const el = document.createElement('div');
+    el.className = 'toast ' + (cls || '');
+    el.textContent = msg;
+    wrap.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 250);
+    }, 2200);
+  }
+
+  // GAS Web App に投稿完了を記録する（PropertiesService側の「投稿済みIDリスト」に追加される）。
+  // 実際の投稿そのものはこのアプリ上では行わない（Instagram／Xアプリ側で自分の手で行う）。
+  // 通信に失敗しても、画面上の操作自体は止めない（次回の抽出で重複する可能性はあるが、
+  // 操作不能になるよりはましなため。失敗時はトーストで知らせる）。
+  async function markPostedOnServer(id){
+    try {
+      const res = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'markPosted', itemId: id })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (err) {
+      showToast('記録の送信に失敗しました（通信環境を確認してください）', 'skip');
+    }
+  }
+
+  function handlePosted(id){
+    state.decisions[id] = { decision: 'posted' };
+    showToast('投稿完了として記録しました', 'success');
+    markPostedOnServer(id);
+    setTimeout(() => { state.platform = 'ig'; goNextOrRender(); }, 300);
+  }
+
+  function handleSkip(id){
+    state.decisions[id] = { decision: 'skipped' };
+    showToast('見送りました', 'skip');
+    setTimeout(() => { state.platform = 'ig'; goNextOrRender(); }, 300);
+  }
+
+  function goNextOrRender(){
+    if (state.index < CANDIDATES.length - 1){ state.index++; }
+    render();
+  }
+
+  // ------------------------------------------------------------------
+  // スワイプ操作（タッチ）
+  // ------------------------------------------------------------------
+  (function enableSwipe(){
+    const stage = document.querySelector('.stage');
+    let startX = null, startY = null, dragging = false;
+
+    stage.addEventListener('touchstart', e => {
+      const t = e.touches[0];
+      startX = t.clientX; startY = t.clientY; dragging = true;
+    }, { passive: true });
+
+    stage.addEventListener('touchmove', e => {
+      if (!dragging) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX, dy = t.clientY - startY;
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+
+    stage.addEventListener('touchend', e => {
+      if (!dragging) return;
+      dragging = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX, dy = t.clientY - startY;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)){
+        if (dx < 0) goNext(); else goPrev();
+      }
+    });
+  })();
+
+  // ------------------------------------------------------------------
+  // 設定モーダル
+  // ------------------------------------------------------------------
+  function openSettings(){
+    document.getElementById('set-days').value = settings.days;
+    document.getElementById('set-views').value = settings.minViews;
+    document.getElementById('set-count').value = settings.count;
+    document.getElementById('set-ig-account').value = settings.igAccount;
+    document.getElementById('set-x-account').value = settings.xAccount;
+    document.getElementById('set-inactivity').value = settings.inactivityStopDays;
+    renderFramePreview();
+    document.getElementById('settings-overlay').classList.add('open');
+  }
+  function closeSettings(){
+    document.getElementById('settings-overlay').classList.remove('open');
+  }
+  async function saveSettings(){
+    const updated = {
+      days: Number(document.getElementById('set-days').value) || 0,
+      minViews: Number(document.getElementById('set-views').value) || 0,
+      count: Number(document.getElementById('set-count').value) || 1,
+      igAccount: document.getElementById('set-ig-account').value.trim(),
+      xAccount: document.getElementById('set-x-account').value.trim(),
+      inactivityStopDays: Number(document.getElementById('set-inactivity').value) || 14
+    };
+    settings = Object.assign({}, settings, updated);
+    closeSettings();
+    render(); // アカウント名の変更などをすぐ画面に反映
+    try {
+      const res = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'saveSettings', settings: updated })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showToast('抽出条件・投稿先アカウントを更新しました', 'success');
+    } catch (err) {
+      showToast('保存に失敗しました（通信環境を確認してください）', 'skip');
+    }
+  }
+
+  loadCandidates();
+</script>
+</body>
+</html>
