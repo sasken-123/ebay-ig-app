@@ -73,7 +73,8 @@
   .thumb-row{flex:0 0 auto;display:flex;gap:9px;align-items:center;}
   .thumb{width:48px;height:48px;border-radius:6px;object-fit:cover;flex-shrink:0;background:var(--gray-bg);border:1px solid var(--line);}
   .thumb-info{min-width:0;flex:1;}
-  .item-name{font-weight:700;font-size:12.5px;line-height:1.3;margin:0 0 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .item-name{font-weight:700;font-size:12.5px;line-height:1.3;margin:0 0 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:inherit;text-decoration:none;cursor:pointer;}
+  a.item-name:active{opacity:0.7;}
   .item-price{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink);}
 
   .platform-toggle{flex:0 0 auto;display:flex;background:var(--gray-bg);border-radius:20px;padding:2px;gap:2px;}
@@ -85,7 +86,7 @@
   .account-banner.empty{background:var(--amber-bg);color:#8A5A1E;font-weight:500;}
 
   .caption-box{flex:1 1 auto;min-height:0;border:1px solid var(--line);border-radius:6px;background:#FDFCFA;overflow:hidden;}
-  .caption-box-text{height:100%;overflow-y:auto;padding:8px 9px;font-size:11.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap;}
+  .caption-box-text{height:100%;overflow-y:auto;padding:8px 9px;font-size:11.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap;user-select:text;-webkit-user-select:text;}
   .caption-inline-tools{float:right;display:flex;align-items:center;gap:6px;margin:0 0 5px 8px;}
   .char-count{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink-soft);}
   .char-count.over{color:var(--red);font-weight:700;}
@@ -118,8 +119,18 @@
   .toast.success{background:var(--green);}
   .toast.skip{background:var(--ink-soft);}
 
+  .head-btns{display:flex;gap:6px;flex-shrink:0;}
+
   #settings-overlay{display:none;position:fixed;inset:0;background:rgba(20,24,30,0.55);align-items:center;justify-content:center;padding:16px;z-index:150;}
   #settings-overlay.open{display:flex;}
+  #manual-overlay{display:none;position:fixed;inset:0;background:rgba(20,24,30,0.55);align-items:center;justify-content:center;padding:16px;z-index:150;}
+  #manual-overlay.open{display:flex;}
+  .manual-box h3{font-family:'Barlow Condensed',sans-serif;font-size:14px;letter-spacing:0.3px;text-transform:uppercase;margin:16px 0 6px;color:var(--ink);}
+  .manual-box h3:first-of-type{margin-top:0;}
+  .manual-box p{font-size:12px;line-height:1.6;color:var(--ink);margin:0 0 6px;}
+  .manual-box ol, .manual-box ul{margin:0 0 6px;padding-left:18px;}
+  .manual-box li{font-size:12px;line-height:1.6;color:var(--ink);margin-bottom:3px;}
+  .manual-box .manual-note{font-size:10.5px;color:var(--ink-soft);background:var(--gray-bg);border-radius:5px;padding:8px 10px;margin-top:10px;line-height:1.5;}
   #login-overlay{display:none;position:fixed;inset:0;background:rgba(20,24,30,0.55);align-items:center;justify-content:center;padding:16px;z-index:250;}
   #login-overlay.open{display:flex;}
   #login-pw{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:5px;font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--ink);}
@@ -157,7 +168,10 @@
       <h1>投稿候補チェック</h1>
       <div class="sub">eBay → Instagram / X</div>
     </div>
-    <button class="gear-btn" onclick="openSettings()" title="抽出条件を変更">⚙️</button>
+    <div class="head-btns">
+      <button class="gear-btn" onclick="openManual()" title="使い方">❓</button>
+      <button class="gear-btn" onclick="openSettings()" title="抽出条件を変更">⚙️</button>
+    </div>
   </div>
 
   <div class="nav-row">
@@ -207,6 +221,19 @@
     </div>
 
     <div class="settings-field">
+      <label>投稿文の文字数上限（プラットフォームの仕様が変わった時用）</label>
+      <div class="desc-sm">通常は変更不要です。X・Instagramの公式の上限が将来変わった場合に、ここで調整してください。上限を超える分は自動で末尾が省略されます。</div>
+      <div class="inline-input">
+        <input type="number" id="set-x-limit" min="1" step="1">
+        <span class="unit">文字（X）</span>
+      </div>
+      <div class="inline-input" style="margin-top:6px;">
+        <input type="number" id="set-ig-limit" min="1" step="1">
+        <span class="unit">文字（Instagram）</span>
+      </div>
+    </div>
+
+    <div class="settings-field">
       <label>この日数、操作がなければ自動取得を停止する</label>
       <div class="desc-sm">この期間ずっとアプリを開かなかった場合、eBay・AIの自動取得を一時停止します（課金を抑えるため）。次にこのアプリを開いた時点で自動的に再開します。</div>
       <div class="inline-input">
@@ -245,6 +272,61 @@
     <div class="settings-actions">
       <button class="btn-ghost2" onclick="closeSettings()">キャンセル</button>
       <button class="btn-primary2" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="manual-overlay">
+  <div class="settings-box manual-box">
+    <h2>使い方</h2>
+    <div class="desc">毎日の運用の流れと、画面の見方をまとめています。</div>
+
+    <h3>毎日の流れ</h3>
+    <ol>
+      <li>決まった時間（現在は17〜18時ごろ）に自動でeBayの出品をチェックし、条件に合う商品があればメールで知らせます。</li>
+      <li>メールのリンク（またはこのURLをブックマークして直接開く）→パスワードを入力すると、その日の候補が1件ずつ表示されます。</li>
+      <li>Instagram／Xタブを切り替えて投稿文を確認します。</li>
+      <li>「🔗 コピーして開く」を押すと、投稿文をコピーしつつInstagram／Xが開きます。あとは自分の手で貼り付けて投稿してください（自動投稿はしません）。</li>
+      <li>投稿し終えたら「投稿完了にする」を押します。投稿しない場合は「見送る」を押してください。</li>
+    </ol>
+
+    <h3>カードの見方</h3>
+    <ul>
+      <li>上部のタグ：ジャンル／出品からの経過日数／View数</li>
+      <li>商品タイトルをタップすると、eBayの出品ページが新しいタブで開きます（内容確認用）</li>
+      <li>‹ › ボタン、または画面を左右にスワイプすると候補を切り替えられます</li>
+    </ul>
+
+    <h3>投稿文について</h3>
+    <ul>
+      <li>本文欄はドラッグして一部だけ選択・コピーもできます（📋ボタンは全文コピー用）</li>
+      <li>ハッシュタグはAIが商品の特徴に合わせて自動生成し、本文の一番最後に付きます</li>
+      <li>文字数が多すぎる場合は自動で末尾が省略されます（上限は⚙️設定から変更できます）</li>
+      <li>Instagramの時だけ「🖼️ 画像を保存」で、商品写真に枠を重ねた投稿用画像を保存できます</li>
+    </ul>
+
+    <h3>「見送る」と「投稿完了にする」の違い</h3>
+    <p>どちらを押しても、その商品は以後二度と候補に出てこなくなります。「投稿完了にする」は実際に投稿した時、「見送る」は投稿しないと決めた時に使ってください（記録の意味が違うだけで、以後出てこなくなる点は同じです）。</p>
+
+    <h3>⚙️設定でできること</h3>
+    <ul>
+      <li>抽出条件（経過日数・view数の閾値・候補件数）</li>
+      <li>投稿文の文字数上限（X・Instagram）</li>
+      <li>投稿先アカウント名（誤投稿防止の確認バナー表示用）</li>
+      <li>Instagram投稿用の枠画像のアップロード</li>
+      <li>操作がない場合に自動取得を停止するまでの日数</li>
+    </ul>
+
+    <h3>スマホで使うには</h3>
+    <p>特別な準備は不要です。スマホのブラウザ（Safari／Chromeなど）でこのページと同じURLを開き、パスワードを入力すれば、PCと同じ内容がそのまま使えます。抽出条件や投稿済みの記録はGAS側に保存されるので、PCとスマホで内容がズレることはありません。</p>
+    <p>毎回URLを入力するのが面倒な場合は、ブラウザでブックマークするか、「ホーム画面に追加」しておくとアイコンからワンタップで開けて便利です（Safari：共有ボタン→「ホーム画面に追加」／Chrome：メニュー→「ホーム画面に追加」）。</p>
+
+    <div class="manual-note">
+      枠画像だけは端末ごとのブラウザに保存する仕組みのため、スマホで初めて使う時は⚙️から枠画像を一度アップロードしてください（PCで設定済みでも、スマホには自動で引き継がれません）。
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn-primary2" onclick="closeManual()">閉じる</button>
     </div>
   </div>
 </div>
@@ -291,16 +373,18 @@
     days: 10, minViews: 300, count: 3, // days: 出品からこの日数「以内」のものだけを対象にする／minViews: 累計view数の下限
     igAccount: '', // 投稿先Instagramアカウント（誤投稿防止の確認表示用。空なら未設定扱い）
     xAccount: '',  // 投稿先Xアカウント（同上）
-    inactivityStopDays: 14 // この日数、操作がなければ自動取得を停止する
+    inactivityStopDays: 14, // この日数、操作がなければ自動取得を停止する
+    xCharLimit: 280,   // X投稿文の文字数上限（公式ルール。将来変わった場合に備えて設定可能にした）
+    igCharLimit: 2200  // Instagram投稿文の文字数上限（公式のキャプション上限。同上）
   };
 
   let CANDIDATES = [];
   let loadState = 'loading'; // 'loading' | 'ready' | 'error'
 
   // GASの doGet が返す候補（itemId/name/price/categoryName/imageUrl/itemUrl/description/views/
-  // recommendPoint/_listedDaysAgo）を、このアプリの描画コードが使う形に変換する。
-  // hook（短いひとこと）は専用フィールドが無いため、recommendPointをそのまま流用している。
-  // hashtagsはGAS側でまだ生成していないため、いったん空配列（今後AI生成を足す余地あり）。
+  // hook/recommendPoint/hashtags/_listedDaysAgo）を、このアプリの描画コードが使う形に変換する。
+  // 2026-09-02〜：hook（IG用の短いひとこと）とhashtags（ハッシュタグ候補、多め10件）は
+  // GAS側のsummarizeWithClaude()がJSON形式でまとめて生成するようになった。
   function mapCandidate(raw){
     const priceText = (raw.price === null || raw.price === undefined || isNaN(raw.price))
       ? '$-' : '$' + Number(raw.price).toFixed(2);
@@ -314,9 +398,9 @@
       image: raw.imageUrl || '',
       emoji: '🏷️',
       url: raw.itemUrl || ('https://www.ebay.com/itm/' + raw.itemId),
-      hook: raw.recommendPoint || '',
+      hook: raw.hook || raw.recommendPoint || '',
       point: raw.recommendPoint || '',
-      hashtags: []
+      hashtags: Array.isArray(raw.hashtags) ? raw.hashtags : []
     };
   }
 
@@ -363,14 +447,49 @@
   // 投稿文はInstagram用・X(Twitter)用をそれぞれ別フォーマットで自動生成する。
   // Recommend point / hook は補足メモではなく、実際に投稿される本文の一部としてそのまま使われる。
 
-  // Instagram：タイトル・出品URL・ひとこと・ハッシュタグのシンプル構成。
+  // ハッシュタグの本数はプラットフォームごとに変える（2026-09-02決定）：
+  // Instagramは説明少なめ・ハッシュタグ多め、Xは説明多め（現状維持）・ハッシュタグ少なめ。
+  // どちらもハッシュタグは本文の最後（文末）に置く。
+  const IG_HASHTAG_COUNT = 10;
+  const X_HASHTAG_COUNT = 3;
+
+  // 文字数上限は⚙️設定画面から変更できる（settings.xCharLimit / settings.igCharLimit）。
+  // X・Instagramどちらも公式の上限が将来変わることがあるため、コード内に固定せず
+  // 設定値（未設定時はここのデフォルト）を毎回読みに行く（2026-09-02追加）。
+  const X_LIMIT_DEFAULT = 280;
+  const IG_LIMIT_DEFAULT = 2200;
+  function getXLimit(){ return settings.xCharLimit || X_LIMIT_DEFAULT; }
+  function getIgLimit(){ return settings.igCharLimit || IG_LIMIT_DEFAULT; }
+
+  // Instagram：タイトル・出品URL・ひとこと（hook、短め）・ハッシュタグ（多め）のシンプル構成。
   // ※Instagramの通常投稿はキャプション内URLをリンク化しないため、テキスト表示のみ。
+  // 文字数上限（getIgLimit()）を超える場合は、hookだけを自動で末尾省略する
+  // （タイトル・URL・ハッシュタグは削らない）。
   function buildInstagramCaption(c){
-    return `${c.emoji || ''} ${c.name}\n🔗 ${c.url}\n\n${c.hook}\n\n${c.hashtags.join(' ')}`;
+    const tags = c.hashtags.slice(0, IG_HASHTAG_COUNT).join(' ');
+    const header = `${c.emoji || ''} ${c.name}\n🔗 ${c.url}`;
+    const limit = getIgLimit();
+    const fixedLen = header.length + 2 + 2 + tags.length; // \n\n の2回分
+    const budget = limit - fixedLen;
+
+    let hook = c.hook;
+    if (hook.length > budget){
+      let truncated = '';
+      for (const word of hook.split(' ')){
+        const candidate = truncated ? truncated + ' ' + word : word;
+        if (candidate.length + 1 > budget) break;
+        truncated = candidate;
+      }
+      hook = (truncated || hook.slice(0, Math.max(0, budget - 1))) + '…';
+    }
+
+    const text = `${header}\n\n${hook}\n\n${tags}`;
+    return { text: text, length: text.length };
   }
 
   // X(Twitter)：全角2・半角1でカウントする公式ルールに合わせた重み付き文字数。
-  // URLはt.co短縮後、実際の文字数に関わらず一律23として計算する。
+  // URLはt.co短縮後、実際の文字数に関わらず一律23として計算する（これは文字数上限ではなく
+  // t.co短縮の固定仕様なので、設定画面では変更しない）。
   function xWeightedLength(str){
     let len = 0;
     for (const ch of str){
@@ -378,19 +497,19 @@
     }
     return len;
   }
-  const X_LIMIT = 280;
   const X_URL_WEIGHT = 23;
 
-  // X：見出し＋説明（Recommend point）＋その下にURL＋ハッシュタグ。280文字（重み付き）超は自動で省略。
+  // X：見出し＋説明（Recommend point、現状の分量を維持）＋その下にURL＋ハッシュタグ（少なめ）。
+  // 文字数上限（getXLimit()、重み付き）超は自動で省略。
   // ※本文には商品価格を含めない（価格は画面上の参考表示のみ）。
   function buildXCaption(c){
     const header = `${c.emoji || ''} ${c.name}`;
-    const hashtagLine = c.hashtags.join(' ');
+    const hashtagLine = c.hashtags.slice(0, X_HASHTAG_COUNT).join(' ');
     const fixedWeight =
       xWeightedLength(header) + xWeightedLength('\n\n') +
       xWeightedLength('\n\n') + X_URL_WEIGHT +
       xWeightedLength('\n\n') + xWeightedLength(hashtagLine);
-    let budget = X_LIMIT - fixedWeight;
+    let budget = getXLimit() - fixedWeight;
 
     let point = c.point;
     if (xWeightedLength(point) > budget){
@@ -433,13 +552,14 @@
       : '';
 
     const xCap = buildXCaption(c);
-    const overLimit = xCap.weight > X_LIMIT;
+    const igCap = buildInstagramCaption(c);
     const p = state.platform;
+    const overLimit = p === 'x' ? xCap.weight > getXLimit() : igCap.length > getIgLimit();
 
     const charCountHtml = p === 'x'
-      ? `<span class="char-count ${overLimit ? 'over' : ''}">${xCap.weight}/${X_LIMIT}</span>`
-      : '';
-    const captionText = p === 'ig' ? buildInstagramCaption(c) : xCap.text;
+      ? `<span class="char-count ${overLimit ? 'over' : ''}">${xCap.weight}/${getXLimit()}</span>`
+      : `<span class="char-count ${overLimit ? 'over' : ''}">${igCap.length}/${getIgLimit()}</span>`;
+    const captionText = p === 'ig' ? igCap.text : xCap.text;
 
     // 誤投稿防止：設定した投稿先アカウントを、キャプションを見ている間ずっと表示しておく。
     // あくまで目視確認用のリマインダーで、実際にそのアカウントで開くことを技術的に強制するものではない。
@@ -476,7 +596,7 @@
         <div class="thumb-row">
           <img class="thumb" src="${c.image}" alt="${c.name}">
           <div class="thumb-info">
-            <p class="item-name">${c.name}</p>
+            <a class="item-name" href="${c.url}" target="_blank" rel="noopener" title="eBayの出品ページを開く">${c.name}</a>
             <div class="item-price mono">${c.price}</div>
           </div>
         </div>
@@ -524,7 +644,7 @@
     opts = opts || {};
     const c = CANDIDATES.find(x => x.id === btn.dataset.id);
     const platform = btn.dataset.platform;
-    const text = platform === 'ig' ? buildInstagramCaption(c) : buildXCaption(c).text;
+    const text = platform === 'ig' ? buildInstagramCaption(c).text : buildXCaption(c).text;
     const label = platform === 'ig' ? 'Instagram' : 'X';
     const account = ((platform === 'ig' ? settings.igAccount : settings.xAccount) || '').trim();
     const accountNote = account ? account + 'で' : '';
@@ -735,9 +855,28 @@
     setTimeout(() => { state.platform = 'ig'; goNextOrRender(); }, 300);
   }
 
+  // 2026-09-02〜：「見送る」も「投稿完了にする」と同じく、以後この商品を二度と
+  // 候補に出さないようにする（GAS側にmarkSkippedを送ってSKIPPED_IDSへ記録）。
+  async function markSkippedOnServer(id){
+    try {
+      const res = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'markSkipped', itemId: id, pw: appPassword })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data && data.error === 'unauthorized'){
+        showToast('パスワードが無効です。画面を開き直してください', 'skip');
+      }
+    } catch (err) {
+      showToast('記録の送信に失敗しました（通信環境を確認してください）', 'skip');
+    }
+  }
+
   function handleSkip(id){
     state.decisions[id] = { decision: 'skipped' };
-    showToast('見送りました', 'skip');
+    showToast('見送りました（今後この商品は候補に出ません）', 'skip');
+    markSkippedOnServer(id);
     setTimeout(() => { state.platform = 'ig'; goNextOrRender(); }, 300);
   }
 
@@ -754,6 +893,9 @@
     let startX = null, startY = null, dragging = false;
 
     stage.addEventListener('touchstart', e => {
+      // キャプション本文（.caption-box-text）内から始まったタッチは、手動選択・コピーの
+      // 邪魔をしないよう、カードスワイプ扱いにしない（2026-09-02追加）。
+      if (e.target.closest && e.target.closest('.caption-box-text')) { dragging = false; return; }
       const t = e.touches[0];
       startX = t.clientX; startY = t.clientY; dragging = true;
     }, { passive: true });
@@ -779,6 +921,16 @@
   })();
 
   // ------------------------------------------------------------------
+  // 使い方モーダル（2026-09-02追加）
+  // ------------------------------------------------------------------
+  function openManual(){
+    document.getElementById('manual-overlay').classList.add('open');
+  }
+  function closeManual(){
+    document.getElementById('manual-overlay').classList.remove('open');
+  }
+
+  // ------------------------------------------------------------------
   // 設定モーダル
   // ------------------------------------------------------------------
   function openSettings(){
@@ -788,6 +940,8 @@
     document.getElementById('set-ig-account').value = settings.igAccount;
     document.getElementById('set-x-account').value = settings.xAccount;
     document.getElementById('set-inactivity').value = settings.inactivityStopDays;
+    document.getElementById('set-x-limit').value = settings.xCharLimit;
+    document.getElementById('set-ig-limit').value = settings.igCharLimit;
     renderFramePreview();
     document.getElementById('settings-overlay').classList.add('open');
   }
@@ -801,7 +955,9 @@
       count: Number(document.getElementById('set-count').value) || 1,
       igAccount: document.getElementById('set-ig-account').value.trim(),
       xAccount: document.getElementById('set-x-account').value.trim(),
-      inactivityStopDays: Number(document.getElementById('set-inactivity').value) || 14
+      inactivityStopDays: Number(document.getElementById('set-inactivity').value) || 14,
+      xCharLimit: Number(document.getElementById('set-x-limit').value) || 280,
+      igCharLimit: Number(document.getElementById('set-ig-limit').value) || 2200
     };
     settings = Object.assign({}, settings, updated);
     closeSettings();
