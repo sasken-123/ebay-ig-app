@@ -461,6 +461,37 @@
   function getXLimit(){ return settings.xCharLimit || X_LIMIT_DEFAULT; }
   function getIgLimit(){ return settings.igCharLimit || IG_LIMIT_DEFAULT; }
 
+  // 文字数上限を超えた場合の省略ルール：末尾に「…」を付けず、文の区切り（。！？.!?）
+  // で切れる場合はそこまでの完全な文だけを残す。区切りが見つからない場合は、
+  // 単語の途中で切れないところまでの文章を残す（尻切れの「…」表示をなくすため、2026-09-02変更）。
+  function truncateCleanly(text, budget, weightFn){
+    weightFn = weightFn || (s => s.length);
+    if (weightFn(text) <= budget) return text;
+
+    // まず文の区切りで切れる最大のところを探す
+    const re = /[.!?。！？]/g;
+    let bestCut = '';
+    let m;
+    while ((m = re.exec(text)) !== null){
+      const candidate = text.slice(0, m.index + 1).trim();
+      if (weightFn(candidate) <= budget){
+        bestCut = candidate;
+      } else {
+        break;
+      }
+    }
+    if (bestCut) return bestCut;
+
+    // 文の区切りで収まらない場合は、単語の切れ目までを残す（「…」は付けない）
+    let truncated = '';
+    for (const word of text.split(' ')){
+      const candidate = truncated ? truncated + ' ' + word : word;
+      if (weightFn(candidate) > budget) break;
+      truncated = candidate;
+    }
+    return truncated;
+  }
+
   // Instagram：タイトル・出品URL・ひとこと（hook、短め）・ハッシュタグ（多め）のシンプル構成。
   // ※Instagramの通常投稿はキャプション内URLをリンク化しないため、テキスト表示のみ。
   // 文字数上限（getIgLimit()）を超える場合は、hookだけを自動で末尾省略する
@@ -472,16 +503,7 @@
     const fixedLen = header.length + 2 + 2 + tags.length; // \n\n の2回分
     const budget = limit - fixedLen;
 
-    let hook = c.hook;
-    if (hook.length > budget){
-      let truncated = '';
-      for (const word of hook.split(' ')){
-        const candidate = truncated ? truncated + ' ' + word : word;
-        if (candidate.length + 1 > budget) break;
-        truncated = candidate;
-      }
-      hook = (truncated || hook.slice(0, Math.max(0, budget - 1))) + '…';
-    }
+    const hook = truncateCleanly(c.hook, budget);
 
     const text = `${header}\n\n${hook}\n\n${tags}`;
     return { text: text, length: text.length };
@@ -511,16 +533,7 @@
       xWeightedLength('\n\n') + xWeightedLength(hashtagLine);
     let budget = getXLimit() - fixedWeight;
 
-    let point = c.point;
-    if (xWeightedLength(point) > budget){
-      let truncated = '';
-      for (const word of point.split(' ')){
-        const candidate = truncated ? truncated + ' ' + word : word;
-        if (xWeightedLength(candidate) + xWeightedLength('…') > budget) break;
-        truncated = candidate;
-      }
-      point = truncated + '…';
-    }
+    const point = truncateCleanly(c.point, budget, xWeightedLength);
 
     return { text: `${header}\n\n${point}\n\n${c.url}\n\n${hashtagLine}`, weight: fixedWeight + xWeightedLength(point) };
   }
