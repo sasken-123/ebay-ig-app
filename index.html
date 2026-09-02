@@ -42,8 +42,9 @@
   .ledger-head .sub{font-size:9.5px;color:var(--ink-soft);letter-spacing:0.6px;text-transform:uppercase;margin-top:2px;}
   .gear-btn{background:var(--card);border:1px solid var(--line);border-radius:50%;width:28px;height:28px;flex-shrink:0;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;}
 
-  .nav-row{flex:0 0 auto;display:flex;align-items:center;gap:8px;}
-  .nav-chev{background:var(--card);border:1px solid var(--line);color:var(--ink-soft);width:26px;height:26px;border-radius:50%;font-size:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;}
+  /* 親指の届きやすい画面下部に固定表示するため、フッター的な見た目に（2026-09-02変更） */
+  .nav-row{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--line);}
+  .nav-chev{background:var(--card);border:1px solid var(--line);color:var(--ink-soft);width:40px;height:40px;border-radius:50%;font-size:18px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;}
   .nav-chev:disabled{opacity:0.3;}
   .dots{display:flex;gap:4px;flex:1;justify-content:center;align-items:center;}
   .dot{width:6px;height:6px;border-radius:50%;background:var(--line);}
@@ -174,17 +175,17 @@
     </div>
   </div>
 
+  <div class="stage">
+    <div class="card-wrap" id="card-wrap">
+      <!-- カードはJSで描画 -->
+    </div>
+  </div>
+
   <div class="nav-row">
     <button class="nav-chev" id="btn-prev" onclick="goPrev()">‹</button>
     <div class="dots" id="dots"></div>
     <span class="pos-label" id="pos-label">1/-</span>
     <button class="nav-chev" id="btn-next" onclick="goNext()">›</button>
-  </div>
-
-  <div class="stage">
-    <div class="card-wrap" id="card-wrap">
-      <!-- カードはJSで描画 -->
-    </div>
   </div>
 
 </div>
@@ -544,6 +545,31 @@
   }
   const INSTAGRAM_HOME_URL = 'https://www.instagram.com/';
 
+  // Instagramには「投稿作成画面を外部から開く」公式な仕組み（Xのweb intentのようなもの）が
+  // 存在しない（スパム対策上、意図的に用意されていない）。そのため完全な自動遷移はできないが、
+  // アプリがインストールされていればホーム画面ではなく撮影／投稿作成画面（instagram://camera）に
+  // 直接ジャンプさせることはでき、そちらの方がホームより一手少なく済む。未インストール、または
+  // 一定時間たってもアプリに切り替わらなかった場合はWeb版を新しいタブで開く（2026-09-02追加）。
+  function openInstagramApp(webUrl){
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    if (isIOS){
+      window.location.href = 'instagram://camera';
+      setTimeout(() => {
+        // アプリへ切り替わっていれば（=タブが非表示になっていれば）何もしない。
+        // 切り替わっていなければアプリ未インストールとみなしWeb版を新しいタブで開く。
+        if (document.visibilityState !== 'hidden'){
+          window.open(webUrl, '_blank');
+        }
+      }, 1200);
+    } else if (isAndroid){
+      // intent URLはbrowser_fallback_urlが指定されていれば未インストール時に自動でそちらへ飛ぶ
+      window.location.href = 'intent://camera/#Intent;package=com.instagram.android;scheme=instagram;S.browser_fallback_url=' + encodeURIComponent(webUrl) + ';end';
+    } else {
+      window.open(webUrl, '_blank');
+    }
+  }
+
   // ------------------------------------------------------------------
   // 状態管理・描画
   // ------------------------------------------------------------------
@@ -587,11 +613,13 @@
     const igHandle = settings.igAccount.replace(/^@/, '').trim();
     const igHref = igHandle ? `https://www.instagram.com/${encodeURIComponent(igHandle)}/` : INSTAGRAM_HOME_URL;
 
-    // 「開く」ボタンはクリックした瞬間にクリップボードへもコピーしてから遷移する
-    // （href/target=_blankはそのまま残すので、ブラウザの通常のリンク遷移として動く）
+    // 「開く」ボタンはクリックした瞬間にクリップボードへもコピーしてから遷移する。
+    // Instagramはアプリのカメラ／投稿作成画面への直接ジャンプを試み、ダメならWeb版にフォールバックする
+    // （openInstagramApp参照。ただし投稿作成画面を開くところまでで、画像添付・キャプション貼り付け
+    // 自体はInstagram側の仕様上どうしても自動化できないため、そこは手動になる）。
     // 画像の保存はInstagram投稿のときだけ表示する（X投稿には画像を添付しない）。
     const actions = p === 'ig'
-      ? `<a class="link-btn ig" data-id="${c.id}" data-platform="ig" href="${igHref}" target="_blank" rel="noopener" onclick="copyCaption(this,{silent:true})">🔗 コピーしてInstagramを開く</a><button type="button" class="link-btn img-save" data-id="${c.id}" onclick="saveImageForId(this.dataset.id)">🖼️ 画像を保存</button>`
+      ? `<button type="button" class="link-btn ig" data-id="${c.id}" data-platform="ig" onclick="copyCaption(this,{silent:true});openInstagramApp('${igHref.replace(/'/g, "\\'")}')">🔗 コピーしてInstagramを開く</button><button type="button" class="link-btn img-save" data-id="${c.id}" onclick="saveImageForId(this.dataset.id)">🖼️ 画像を保存</button>`
       : `<a class="link-btn x" data-id="${c.id}" data-platform="x" href="${buildXIntentUrl(c)}" target="_blank" rel="noopener" onclick="copyCaption(this,{silent:true})">🔗 コピーしてXを開く</a>`;
 
     return `
@@ -741,16 +769,34 @@
         }
       }
 
-      // 通常のブラウザで開いている場合（ダウンロードしたHTMLファイルなど）のフォールバック。
-      // iOS Safari等は<a download>が効かない場合があるため、新規タブで開いて長押し保存を案内する。
-      const url = URL.createObjectURL(blob);
-      const opened = window.open(url, '_blank');
-      if (!opened){
-        const a = document.createElement('a');
-        a.href = url; a.download = 'post-image.png';
-        document.body.appendChild(a); a.click(); a.remove();
+      // スマホ（iOS Safari／Androidブラウザ）は共有シートから直接「画像を保存」を選べるので、
+      // それが使える場合はこちらを優先する（長押し保存より確実で分かりやすいため。2026-09-02追加）。
+      try {
+        const file = new File([blob], 'post-image.png', { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })){
+          await navigator.share({ files: [file] });
+          showToast('共有画面が開いたら「画像を保存」を選んでください', 'success');
+          return;
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError'){ return; } // 共有をキャンセルした場合は何もしない
+        // 共有に失敗・未対応の場合は下のフォールバックへ
       }
-      showToast(framed ? '画像を生成しました（枠あり）。新しいタブで長押しして保存してください' : '画像を生成しました（枠は未設定）。新しいタブで長押しして保存してください', 'success');
+
+      // 共有シートが使えない環境（主にPC）向けのフォールバック。<a download>で直接ダウンロードする。
+      // iOS Safariの一部バージョン等、それでも保存できない場合の保険として新規タブも開いておく。
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'post-image.png';
+      document.body.appendChild(a); a.click(); a.remove();
+
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile){
+        window.open(url, '_blank');
+        showToast(framed ? '画像を生成しました（枠あり）。保存されない場合は開いたタブを長押しして保存してください' : '画像を生成しました（枠は未設定）。保存されない場合は開いたタブを長押しして保存してください', 'success');
+      } else {
+        showToast(framed ? '画像を保存しました（枠あり）' : '画像を保存しました（枠は未設定）', 'success');
+      }
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     }, 'image/png');
   }
