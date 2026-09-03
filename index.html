@@ -274,6 +274,10 @@
       <button class="btn-ghost2" onclick="closeSettings()">キャンセル</button>
       <button class="btn-primary2" onclick="saveSettings()">保存</button>
     </div>
+
+    <div class="settings-note" style="margin-top:14px;text-align:center;">
+      <a href="#" onclick="logout();return false;" style="color:var(--ink-soft);">🔒 パスワードをこの端末に覚えさせない（ログアウト）</a>
+    </div>
   </div>
 </div>
 
@@ -356,17 +360,26 @@
 
   // ------------------------------------------------------------------
   // アクセス制御（要件定義9章）。GAS側のACCESS_PASSWORDと照合する簡易パスワード。
-  // ブラウザのタブを閉じるまで（sessionStorage）は再入力不要。
-  // ------------------------------------------------------------------
+  // localStorageに保存し、ホーム画面のアイコンやブックマークから開いた時も
+  // 毎回の再入力が不要なようにする（2026-09-02変更。以前はsessionStorageで、
+  // タブ・アプリを閉じるたびに消えて再入力が必要だった）。
+  // パスワードを変更・失効させたい場合は⚙️設定画面の「ログアウト」から消せる。
   const APP_PW_KEY = 'ig_approval_app_pw';
-  let appPassword = sessionStorage.getItem(APP_PW_KEY) || '';
+  let appPassword = '';
+  try { appPassword = localStorage.getItem(APP_PW_KEY) || ''; } catch (e) { /* プライベートブラウズ等では無視 */ }
 
   function submitLogin(){
     const pw = document.getElementById('login-pw').value;
     appPassword = pw;
-    sessionStorage.setItem(APP_PW_KEY, pw);
+    try { localStorage.setItem(APP_PW_KEY, pw); } catch (e) { /* 無視 */ }
     document.getElementById('login-error').style.display = 'none';
     loadCandidates();
+  }
+
+  function logout(){
+    appPassword = '';
+    try { localStorage.removeItem(APP_PW_KEY); } catch (e) { /* 無視 */ }
+    location.reload();
   }
 
   // ページ読み込み直後の初期値。実際の値はloadCandidates()でGAS Web Appから上書きされる。
@@ -413,7 +426,7 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (data && data.error === 'unauthorized'){
-        sessionStorage.removeItem(APP_PW_KEY);
+        try { localStorage.removeItem(APP_PW_KEY); } catch (e) { /* 無視 */ }
         appPassword = '';
         loadState = 'error';
         document.getElementById('login-error').style.display = 'block';
