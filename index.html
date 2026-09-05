@@ -235,6 +235,15 @@
     </div>
 
     <div class="settings-field">
+      <label>毎日の自動実行の時刻</label>
+      <div class="desc-sm">GASの仕様上、指定した時から1時間の間のどこかで1回実行されます（例：6を指定すると6時台のどこかで実行）。保存すると次回からこの時刻に切り替わります。</div>
+      <div class="inline-input">
+        <input type="number" id="set-trigger-hour" min="0" max="23" step="1">
+        <span class="unit">時台</span>
+      </div>
+    </div>
+
+    <div class="settings-field">
       <label>この日数、操作がなければ自動取得を停止する</label>
       <div class="desc-sm">この期間ずっとアプリを開かなかった場合、eBay・AIの自動取得を一時停止します（課金を抑えるため）。次にこのアプリを開いた時点で自動的に再開します。</div>
       <div class="inline-input">
@@ -317,6 +326,7 @@
     <ul>
       <li>抽出条件（経過日数・view数の閾値・候補件数）</li>
       <li>投稿文の文字数上限（X・Instagram）</li>
+      <li>毎日の自動実行の時刻</li>
       <li>投稿先アカウント名（誤投稿防止の確認バナー表示用）</li>
       <li>Instagram投稿用の枠画像のアップロード</li>
       <li>操作がない場合に自動取得を停止するまでの日数</li>
@@ -389,7 +399,8 @@
     xAccount: '',  // 投稿先Xアカウント（同上）
     inactivityStopDays: 14, // この日数、操作がなければ自動取得を停止する
     xCharLimit: 280,   // X投稿文の文字数上限（公式ルール。将来変わった場合に備えて設定可能にした）
-    igCharLimit: 2200  // Instagram投稿文の文字数上限（公式のキャプション上限。同上）
+    igCharLimit: 2200, // Instagram投稿文の文字数上限（公式のキャプション上限。同上）
+    triggerHour: 6     // 毎日の自動実行（dailyRun）の時刻。0-23（2026-09-05追加）
   };
 
   let CANDIDATES = [];
@@ -1021,6 +1032,7 @@
     document.getElementById('set-inactivity').value = settings.inactivityStopDays;
     document.getElementById('set-x-limit').value = settings.xCharLimit;
     document.getElementById('set-ig-limit').value = settings.igCharLimit;
+    document.getElementById('set-trigger-hour').value = settings.triggerHour;
     renderFramePreview();
     document.getElementById('settings-overlay').classList.add('open');
   }
@@ -1036,8 +1048,10 @@
       xAccount: document.getElementById('set-x-account').value.trim(),
       inactivityStopDays: Number(document.getElementById('set-inactivity').value) || 14,
       xCharLimit: Number(document.getElementById('set-x-limit').value) || 280,
-      igCharLimit: Number(document.getElementById('set-ig-limit').value) || 2200
+      igCharLimit: Number(document.getElementById('set-ig-limit').value) || 2200,
+      triggerHour: Math.min(23, Math.max(0, Number(document.getElementById('set-trigger-hour').value)))
     };
+    if (isNaN(updated.triggerHour)) updated.triggerHour = settings.triggerHour;
     settings = Object.assign({}, settings, updated);
     closeSettings();
     render(); // アカウント名の変更などをすぐ画面に反映
