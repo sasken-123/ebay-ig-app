@@ -685,8 +685,9 @@
     // （openInstagramApp参照。ただし投稿作成画面を開くところまでで、画像添付・キャプション貼り付け
     // 自体はInstagram側の仕様上どうしても自動化できないため、そこは手動になる）。
     // 画像の保存はInstagram投稿のときだけ表示する（X投稿には画像を添付しない）。
+    // 2026-09-12〜：左から順に操作すればよいよう、「画像を保存」→「コピーしてInstagramを開く」の順に変更。
     const actions = p === 'ig'
-      ? `<button type="button" class="link-btn ig" data-id="${c.id}" data-platform="ig" onclick="copyCaption(this,{silent:true});openInstagramApp('${igHref.replace(/'/g, "\\'")}')">🔗 コピーしてInstagramを開く</button><button type="button" class="link-btn img-save" data-id="${c.id}" onclick="saveImageForId(this.dataset.id)">🖼️ 画像を保存</button>`
+      ? `<button type="button" class="link-btn img-save" data-id="${c.id}" onclick="saveImageForId(this.dataset.id)">🖼️ 画像を保存</button><button type="button" class="link-btn ig" data-id="${c.id}" data-platform="ig" onclick="copyCaption(this,{silent:true});openInstagramApp('${igHref.replace(/'/g, "\\'")}')">🔗 コピーしてInstagramを開く</button>`
       : `<a class="link-btn x" data-id="${c.id}" data-platform="x" href="${buildXIntentUrl(c)}" target="_blank" rel="noopener" onclick="copyCaption(this,{silent:true})">🔗 コピーしてXを開く</a>`;
 
     return `
