@@ -1118,6 +1118,23 @@
     document.getElementById('login-overlay').classList.add('open');
     document.getElementById('login-pw').focus();
   }
+
+  // 【2026-09-22追加】スマホでホーム画面に保存したアイコンから開いた場合、OS側が
+  // ページをバックグラウンドで保持したまま復帰させることがあり、その場合ページの
+  // JSは再実行されない（＝loadCandidates()が呼ばれ直さない）ため、朝一番に開いた時点の
+  // 古いCANDIDATESがそのまま表示され続けてしまう不具合があった（GAS側のデータは
+  // 最新でも、端末側の画面が古いまま）。フォアグラウンドに復帰するたびに最新の候補を
+  // 取り直すことで対策する。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && appPassword) {
+      loadCandidates();
+    }
+  });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted && appPassword) {
+      loadCandidates();
+    }
+  });
 </script>
 </body>
 </html>
