@@ -453,6 +453,16 @@
       if (data.settings){
         settings = Object.assign({}, settings, data.settings);
       }
+      // 【2026-09-24追加】枠画像はGAS側にも保存されている（syncFrameToServer参照）。
+      // この端末のlocalStorageが何らかの理由で空になっていても、GAS側に保存が
+      // あれば毎回の読み込み時に自動で復元する（GAS側が空文字＝未保存の場合は、
+      // この端末側の値をそのまま維持する。まだ古い端末しか枠を持っていない場合に
+      // 消してしまわないため）。
+      if (data.frameDataUrl && data.frameDataUrl !== frameDataUrl){
+        frameDataUrl = data.frameDataUrl;
+        try { localStorage.setItem(FRAME_STORAGE_KEY, frameDataUrl); } catch (e) { /* 無視 */ }
+        renderFramePreview();
+      }
       state.index = 0;
       state.decisions = {};
       loadState = 'ready';
@@ -908,6 +918,28 @@
   // ------------------------------------------------------------------
   // 設定：枠画像のアップロード／削除
   // ------------------------------------------------------------------
+  // 【2026-09-24追加】枠画像はこれまでこの端末のlocalStorageにしか保存しておらず、
+  // 何らかの理由でブラウザ側のストレージが消えると「設定したはずの枠が付かなくなる」
+  // 不具合が起きていた（実際に発生・再発した）。localStorageへの保存に加えて、
+  // GAS側（PropertiesService）にも保存するようにし、次回アプリを開いた時に
+  // GAS側の値で復元できるようにする（syncFrameToServer参照）。通信に失敗しても
+  // この端末での利用は止めない（失敗時はトーストで知らせるのみ）。
+  async function syncFrameToServer(dataUrlOrEmpty){
+    try {
+      const res = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: dataUrlOrEmpty ? 'saveFrame' : 'clearFrame', frameDataUrl: dataUrlOrEmpty, pw: appPassword })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data && data.error === 'unauthorized'){
+        showToast('パスワードが無効です。画面を開き直してください', 'skip');
+      }
+    } catch (err) {
+      showToast('枠画像のサーバー側への保存に失敗しました（この端末には保存されています）', 'skip');
+    }
+  }
+
   function handleFrameUpload(e){
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -917,6 +949,7 @@
       try { localStorage.setItem(FRAME_STORAGE_KEY, frameDataUrl); } catch (e) { showToast('枠画像の保存容量が大きすぎるかもしれません（この端末では次回消える可能性があります）', 'skip'); }
       renderFramePreview();
       showToast('枠画像を設定しました', 'success');
+      syncFrameToServer(frameDataUrl);
     };
     reader.onerror = () => showToast('枠画像の読み込みに失敗しました', 'skip');
     reader.readAsDataURL(file);
@@ -929,6 +962,7 @@
     if (input) input.value = '';
     renderFramePreview();
     showToast('枠画像を削除しました（枠なしで保存されます）', 'skip');
+    syncFrameToServer('');
   }
 
   function renderFramePreview(){
