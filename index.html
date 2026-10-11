@@ -370,6 +370,13 @@
   // ------------------------------------------------------------------
   const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwMDq5NQvhP9herNQrHbW0PDsUuew77BBY-_bzOATj8GIoYobNSkpoaOxKsyMGF0a3S/exec';
 
+  // 【2026-10-11追加】自動アップデート。このアプリが前提としているCode.gs（GAS側）のバージョン。
+  // Code.gsのCODE_VERSIONと必ず同じ値にする（Claudeが修正するたびに両方そろえて更新する）。
+  // アプリを開いた時にGAS側のバージョンが違っていれば、GASに「GitHub上の最新Code.gsで
+  // 本体を取り込み直して」と依頼する。これにより、index.htmlとCode.gsをGitHubにアップロードする
+  // だけで、GASエディタでの貼り付け・デプロイが不要になる（GAS側のローダー参照）。
+  const EXPECTED_CODE_VERSION = '2026-10-11.3';
+
   // ------------------------------------------------------------------
   // アクセス制御（要件定義9章）。GAS側のACCESS_PASSWORDと照合する簡易パスワード。
   // localStorageに保存し、ホーム画面のアイコンやブックマークから開いた時も
@@ -407,7 +414,17 @@
 
   let CANDIDATES = [];
   let loadState = 'loading'; // 'loading' | 'ready' | 'error'
-  let runNowInProgress = false;
+  // 【2026-10-11】🔄（作り直し）の実行待ち。作り直しは1〜2分かかるため、その間に画面を切り替えたり
+  // スマホをロックしたりして通信が切れても、完了を確認し続けられるよう端末にも保存しておく。
+  const PENDING_RUN_KEY = 'ig_pending_run';
+  const RUN_TIMEOUT_MS = 8 * 60 * 1000;
+  let pendingRun = null; // { runId, startedAt }（startedAtはこの端末の時刻）
+  try { pendingRun = JSON.parse(localStorage.getItem(PENDING_RUN_KEY) || 'null'); } catch (e) { pendingRun = null; }
+  let pollTimer = null;
+  let polling = false;
+  let loadSeq = 0;          // 読み込みの通し番号（古い読み込み結果で新しい表示を上書きしないため）
+  let lastRawSig = '';      // 前回読み込んだ候補データ（変化がなければ描き直さないため）
+  let lastReturnAt = 0;
 
   // GASの doGet が返す候補（itemId/name/price/categoryName/imageUrl/itemUrl/description/views/
   // hook/recommendPoint/hashtags/_listedDaysAgo）を、このアプリの描画コードが使う形に変換する。
@@ -433,78 +450,287 @@
     };
   }
 
-  async function loadCandidates(){
-    loadState = 'loading';
-    renderLoadState();
+  // 候補を読み込む。
+  // opts.silent: true …… 画面に戻ってきた時などの「裏での再読み込み」。今の表示（見ている商品・
+  //   IG/Xタブ・投稿済み/見送りの記録）はそのまま残し、読み込み中の表示も出さない。通信に
+  //   失敗しても今の表示を残す（2026-10-11変更。以前は戻るたびに「読み込み中」に切り替わって
+  //   1件目に戻り、通信が遅いと矢印を押すまで表示されないことがあった）。
+  async function loadCandidates(opts){
+    opts = opts || {};
+    const silent = !!opts.silent && loadState === 'ready';
+    const seq = ++loadSeq;
+    if (!silent){
+      loadState = 'loading';
+      renderLoadState();
+    }
     try {
-      const res = await fetch(GAS_WEB_APP_URL + '?pw=' + encodeURIComponent(appPassword));
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const data = await fetchCandidatesData();
+      if (seq !== loadSeq) return null; // 後から始まった読み込みがあれば、こちらの結果は捨てる
       if (data && data.error === 'unauthorized'){
-        try { localStorage.removeItem(APP_PW_KEY); } catch (e) { /* 無視 */ }
-        appPassword = '';
-        loadState = 'error';
-        document.getElementById('login-error').style.display = 'block';
-        document.getElementById('login-overlay').classList.add('open');
-        return;
+        showLoginAgain();
+        return null;
       }
-      document.getElementById('login-overlay').classList.remove('open');
-      CANDIDATES = (data.candidates || []).map(mapCandidate);
-      if (data.settings){
-        settings = Object.assign({}, settings, data.settings);
+      if (data && data.error === 'server_error'){
+        // GAS側の本体に不具合がある → GitHubに修正版があれば取り込みを依頼する
+        checkServerVersion(data.codeVersion || 'unknown');
+        throw new Error(data.message || 'server_error');
       }
-      // 【2026-09-24追加】枠画像はGAS側にも保存されている（syncFrameToServer参照）。
-      // この端末のlocalStorageが何らかの理由で空になっていても、GAS側に保存が
-      // あれば毎回の読み込み時に自動で復元する（GAS側が空文字＝未保存の場合は、
-      // この端末側の値をそのまま維持する。まだ古い端末しか枠を持っていない場合に
-      // 消してしまわないため）。
-      if (data.frameDataUrl && data.frameDataUrl !== frameDataUrl){
-        frameDataUrl = data.frameDataUrl;
-        try { localStorage.setItem(FRAME_STORAGE_KEY, frameDataUrl); } catch (e) { /* 無視 */ }
-        renderFramePreview();
-      }
-      state.index = 0;
-      state.decisions = {};
-      loadState = 'ready';
-      render();
+      applyCandidatesData(data, { keepPosition: silent });
+      return data;
     } catch (err) {
+      if (seq !== loadSeq) return null;
+      if (silent) return null;
       loadState = 'error';
       renderLoadState();
+      return null;
     }
   }
 
-  // 「🔄今すぐ実行」ボタン：自動トリガーを待たず、その場でdailyRunを実行して
-  // 候補を再取得する（2026-09-12追加）。eBay一覧取得・AI要約を含むため1〜2分ほど
-  // かかることがあるので、実行中はボタンを無効化してトーストで進捗を伝える。
-  async function runNow(){
-    if (runNowInProgress) return;
-    runNowInProgress = true;
-    const btn = document.getElementById('btn-run-now');
-    if (btn){ btn.disabled = true; btn.textContent = '⏳'; }
-    showToast('候補を今すぐ再取得しています…（1〜2分ほどかかります）', 'success');
+  async function fetchCandidatesData(){
+    const res = await fetch(GAS_WEB_APP_URL + '?pw=' + encodeURIComponent(appPassword) + '&_=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  function showLoginAgain(){
+    try { localStorage.removeItem(APP_PW_KEY); } catch (e) { /* 無視 */ }
+    appPassword = '';
+    loadState = 'error';
+    document.getElementById('login-error').style.display = 'block';
+    document.getElementById('login-overlay').classList.add('open');
+  }
+
+  // GAS側のバージョンを確認し、古ければ自動更新を依頼する（2026-10-11追加）。
+  // GitHubへのアップロード直後はGitHub側のファイルがまだ古いことがあるため、
+  // 1分おきに最大6回まで試す。
+  const SERVER_UPDATE_MAX_TRIES = 6;
+  let serverUpdateTries = 0;
+  let serverUpdateTimer = null;
+  let serverUpdating = false;
+
+  function checkServerVersion(codeVersion){
+    if (!codeVersion) return; // 自動アップデート機能が入る前のGAS（この場合だけは手動で更新が必要）
+    if (codeVersion === EXPECTED_CODE_VERSION){ serverUpdateTries = 0; return; }
+    if (serverUpdating || serverUpdateTimer || serverUpdateTries >= SERVER_UPDATE_MAX_TRIES) return;
+    requestServerUpdate();
+  }
+
+  async function requestServerUpdate(){
+    serverUpdating = true;
+    serverUpdateTries++;
+    if (serverUpdateTries === 1) showToast('GAS側を最新版に更新しています…', 'success');
+    let retry = false;
     try {
       const res = await fetch(GAS_WEB_APP_URL, {
         method: 'POST',
-        body: JSON.stringify({ action: 'runNow', pw: appPassword })
+        body: JSON.stringify({ action: 'selfUpdate', expectedVersion: EXPECTED_CODE_VERSION, pw: appPassword })
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      if (data && data.error === 'unauthorized'){
-        showToast('パスワードが無効です。画面を開き直してください', 'skip');
-        return;
-      }
       if (data && data.ok){
-        showToast('候補を更新しました（' + data.count + '件）', 'success');
-        await loadCandidates();
-      } else {
-        showToast('実行中にエラーが発生しました: ' + (data && data.error ? data.error : '不明なエラー'), 'skip');
+        if (data.updated) showToast('GAS側を最新版に更新しました', 'success');
+        serverUpdateTries = 0;
+        setTimeout(() => loadCandidates({ silent: true }), 3000);
+      } else if (data && data.retryLater && serverUpdateTries < SERVER_UPDATE_MAX_TRIES){
+        retry = true;
+      } else if (data && data.error !== 'unauthorized'){
+        showToast(data.mismatch
+          ? 'GitHub上のCode.gsが古いままです。Code.gsもアップロードされているか確認してください'
+          : 'GAS側の自動更新に失敗しました: ' + (data.error || '不明なエラー'), 'skip');
       }
     } catch (err) {
-      showToast('実行に失敗しました（通信環境を確認するか、時間をおいて再度お試しください）', 'skip');
+      retry = serverUpdateTries < SERVER_UPDATE_MAX_TRIES;
     } finally {
-      runNowInProgress = false;
-      if (btn){ btn.disabled = false; btn.textContent = '🔄'; }
+      serverUpdating = false;
     }
+    if (retry){
+      serverUpdateTimer = setTimeout(() => { serverUpdateTimer = null; requestServerUpdate(); }, 60000);
+    }
+  }
+
+  // GASから受け取った候補データを画面に反映する。
+  // opts.keepPosition: true なら、今見ている商品（ID）・IG/Xタブ・投稿済み/見送りの記録を引き継ぐ。
+  function applyCandidatesData(data, opts){
+    opts = opts || {};
+    document.getElementById('login-overlay').classList.remove('open');
+    checkServerVersion(data.codeVersion);
+    if (data.settings){
+      settings = Object.assign({}, settings, data.settings);
+    }
+    // 【2026-09-24追加】枠画像はGAS側にも保存されている（syncFrameToServer参照）。
+    // この端末のlocalStorageが何らかの理由で空になっていても、GAS側に保存が
+    // あれば毎回の読み込み時に自動で復元する（GAS側が空文字＝未保存の場合は、
+    // この端末側の値をそのまま維持する。まだ古い端末しか枠を持っていない場合に
+    // 消してしまわないため）。
+    if (data.frameDataUrl && data.frameDataUrl !== frameDataUrl){
+      frameDataUrl = data.frameDataUrl;
+      try { localStorage.setItem(FRAME_STORAGE_KEY, frameDataUrl); } catch (e) { /* 無視 */ }
+      renderFramePreview();
+    }
+
+    const rawSig = JSON.stringify(data.candidates || []);
+    if (opts.keepPosition && loadState === 'ready' && rawSig === lastRawSig){
+      return; // 中身が変わっていなければ描き直さない（見ている画面がチラつかないように）
+    }
+    lastRawSig = rawSig;
+    const list = (data.candidates || []).map(mapCandidate);
+    if (opts.keepPosition){
+      const current = CANDIDATES[state.index];
+      CANDIDATES = list;
+      const idx = current ? list.findIndex(c => c.id === current.id) : -1;
+      state.index = idx >= 0 ? idx : Math.max(0, Math.min(state.index, list.length - 1));
+    } else {
+      CANDIDATES = list;
+      state.index = 0;
+      state.decisions = {};
+      state.platform = 'ig';
+    }
+    loadState = 'ready';
+    render();
+  }
+
+  // 「🔄今すぐ実行（作り直し）」ボタン（2026-09-12追加、2026-10-11作り直し）。
+  // GAS側でeBay取得・AI文章作成を行うため1〜2分かかる。以前は結果の返事を待つだけだったため、
+  // 待っている間に画面を切り替える・スマホをロックするなどで通信が切れると、GAS側では候補が
+  // できているのに結果を受け取れず、古い一覧（投稿済みを除くと0件＝「本日の候補はありません」）
+  // が表示されることがあった。今は実行IDを付けて依頼し、通信が切れた場合も、GAS側の実行状況
+  // （runStatus）を5秒ごとに確認して、完了したら新しい候補を表示する。
+  async function runNow(){
+    if (pendingRun){
+      showToast('作り直し中です。完了までお待ちください', 'skip');
+      startPolling();
+      return;
+    }
+    const runId = 'manual-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    setPendingRun({ runId: runId, startedAt: Date.now() });
+    renderRunning();
+    try {
+      const res = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'runNow', runId: runId, pw: appPassword })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (!pendingRun || pendingRun.runId !== runId) return; // 状況確認の側ですでに完了処理済み
+      if (data && data.error === 'unauthorized'){
+        setPendingRun(null);
+        stopPolling();
+        showLoginAgain();
+        return;
+      }
+      if (data && data.busy){
+        // 毎朝の自動実行など、別の作成処理がすでに動いていた → そちらの完了を待つ
+        setPendingRun({ runId: data.runId || '', startedAt: Date.now() });
+        showToast('別の候補作成が実行中のため、その完了を待っています', 'success');
+        startPolling();
+        return;
+      }
+      stopPolling();
+      await finishRun({
+        state: data && data.ok ? 'done' : 'error',
+        count: data && data.count,
+        poolSize: data && data.poolSize,
+        error: data && data.error
+      }, null);
+    } catch (err) {
+      // 通信が切れても、GAS側では作り直しが続いているので、完了するまで状況を確認する
+      if (pendingRun && pendingRun.runId === runId) startPolling();
+    }
+  }
+
+  function setPendingRun(v){
+    pendingRun = v;
+    try {
+      if (v) localStorage.setItem(PENDING_RUN_KEY, JSON.stringify(v));
+      else localStorage.removeItem(PENDING_RUN_KEY);
+    } catch (e) { /* 無視 */ }
+    updateRunButton();
+  }
+
+  function updateRunButton(){
+    const btn = document.getElementById('btn-run-now');
+    if (!btn) return;
+    btn.disabled = !!pendingRun;
+    btn.textContent = pendingRun ? '⏳' : '🔄';
+  }
+
+  function renderRunning(){
+    updateRunButton();
+    const wrap = document.getElementById('card-wrap');
+    if (wrap){
+      wrap.innerHTML = `<div class="empty-state"><div class="big">⏳</div><p>候補を作り直しています…（1〜2分ほどかかります）<br>他のアプリに切り替えたり画面を閉じたりしても大丈夫です。<br>戻ってくると結果が表示されます。</p></div>`;
+    }
+    document.getElementById('pos-label').textContent = '-/-';
+    document.getElementById('btn-prev').disabled = true;
+    document.getElementById('btn-next').disabled = true;
+    document.getElementById('dots').innerHTML = '';
+  }
+
+  function startPolling(){
+    renderRunning();
+    if (!pollTimer) pollTimer = setInterval(pollRunStatus, 5000);
+    pollRunStatus();
+  }
+
+  function stopPolling(){
+    if (pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  async function pollRunStatus(){
+    if (!pendingRun){ stopPolling(); return; }
+    if (polling) return;
+    polling = true;
+    try {
+      const elapsed = Date.now() - pendingRun.startedAt;
+      let data = null;
+      try { data = await fetchCandidatesData(); } catch (e) { data = null; }
+      if (!pendingRun) return;
+      if (data && data.error === 'unauthorized'){
+        setPendingRun(null); stopPolling(); showLoginAgain();
+        return;
+      }
+      if (data){
+        const st = data.runStatus || {};
+        const sameRun = pendingRun.runId ? st.runId === pendingRun.runId : true;
+        if (sameRun && st.state && st.state !== 'running'){
+          stopPolling();
+          await finishRun(st, data);
+          return;
+        }
+        if (!sameRun && st.state !== 'running' && elapsed > 45 * 1000){
+          // 45秒たっても今回の作り直しが記録されていない＝依頼そのものが届かなかった
+          stopPolling();
+          setPendingRun(null);
+          showToast('作り直しを開始できませんでした。もう一度🔄を押してください', 'skip');
+          applyCandidatesData(data, {});
+          return;
+        }
+      }
+      if (elapsed > RUN_TIMEOUT_MS){
+        stopPolling();
+        setPendingRun(null);
+        showToast('作り直しの確認に時間がかかっています。少し時間をおいて開き直してください', 'skip');
+        if (data) applyCandidatesData(data, {}); else loadCandidates();
+      }
+    } finally {
+      polling = false;
+    }
+  }
+
+  // 作り直しの完了処理。dataがあればそれをそのまま表示し、なければ読み込み直す。
+  async function finishRun(st, data){
+    setPendingRun(null);
+    if (st.state === 'done'){
+      if (st.count > 0){
+        showToast('候補を作り直しました（' + st.count + '件）', 'success');
+      } else {
+        showToast('条件に合う未投稿の商品が見つかりませんでした（0件）', 'skip');
+      }
+    } else {
+      showToast('作り直しでエラーが発生しました: ' + (st.error || '不明なエラー'), 'skip');
+    }
+    if (data) applyCandidatesData(data, {});
+    else await loadCandidates();
   }
 
   function renderLoadState(){
@@ -979,14 +1205,17 @@
   }
 
   function render(){
+    if (pendingRun){ renderRunning(); return; } // 作り直し中は結果が出るまで待機表示
     const total = CANDIDATES.length;
 
     if (total === 0){
       document.getElementById('pos-label').textContent = '0/0';
       document.getElementById('btn-prev').disabled = true;
       document.getElementById('btn-next').disabled = true;
-      document.getElementById('card-wrap').innerHTML =
-        `<div class="empty-state"><div class="big">📭</div><p>本日の候補はありません。<br>明日の自動抽出をお待ちください。</p></div>`;
+      // この画面で投稿済み・見送りにした結果0件になった場合と、最初から0件の場合で文言を分ける
+      document.getElementById('card-wrap').innerHTML = Object.keys(state.decisions).length > 0
+        ? `<div class="empty-state"><div class="big">✅</div><p>すべての候補を確認しました。<br>お疲れさまでした。<br>🔄で新しい候補を作り直せます。</p></div>`
+        : `<div class="empty-state"><div class="big">📭</div><p>本日の候補はありません。<br>条件（出品${settings.days}日以内・${settings.minViews}view以上）に合う<br>未投稿の商品が見つかりませんでした。<br>🔄で作り直すか、⚙️で条件を緩めてみてください。</p></div>`;
       renderDots();
       return;
     }
@@ -995,10 +1224,10 @@
     document.getElementById('btn-prev').disabled = state.index <= 0;
     document.getElementById('btn-next').disabled = state.index >= total - 1;
 
-    const allDone = Object.keys(state.decisions).length === total;
+    const allDone = CANDIDATES.every(c => state.decisions[c.id]);
     if (allDone){
       document.getElementById('card-wrap').innerHTML =
-        `<div class="empty-state"><div class="big">✅</div><p>すべての候補を確認しました。<br>お疲れさまでした。</p></div>`;
+        `<div class="empty-state"><div class="big">✅</div><p>すべての候補を確認しました。<br>お疲れさまでした。<br>🔄で新しい候補を作り直せます。</p></div>`;
     } else {
       const c = CANDIDATES[state.index];
       document.getElementById('card-wrap').innerHTML = candidateCardHtml(c);
@@ -1182,27 +1411,36 @@
   }
 
   if (appPassword) {
-    loadCandidates();
+    if (pendingRun && (!pendingRun.startedAt || Date.now() - pendingRun.startedAt > RUN_TIMEOUT_MS)) setPendingRun(null);
+    if (pendingRun) startPolling(); // 作り直しの途中で閉じていた場合は、その完了を待つ
+    else loadCandidates();
   } else {
     document.getElementById('login-overlay').classList.add('open');
     document.getElementById('login-pw').focus();
   }
 
-  // 【2026-09-22追加】スマホでホーム画面に保存したアイコンから開いた場合、OS側が
-  // ページをバックグラウンドで保持したまま復帰させることがあり、その場合ページの
-  // JSは再実行されない（＝loadCandidates()が呼ばれ直さない）ため、朝一番に開いた時点の
-  // 古いCANDIDATESがそのまま表示され続けてしまう不具合があった（GAS側のデータは
-  // 最新でも、端末側の画面が古いまま）。フォアグラウンドに復帰するたびに最新の候補を
-  // 取り直すことで対策する。
+  // 【2026-09-22追加／2026-10-11変更】アプリに戻ってきた時の処理。
+  // スマホのホーム画面アイコンから開くと、OSがページを保持したまま復帰させるため、
+  // 戻るたびに最新の候補を取り直す必要がある。ただし以前は取り直しのたびに「読み込み中」の
+  // 表示に切り替えて1件目に戻していたため、Xに投稿して戻ってきた時などに、通信が遅いと
+  // 矢印を押すまで表示されない・見ていた商品から1件目に戻ってしまう問題があった。
+  // 今は①まず今の画面をすぐに描き直し、②裏で最新の候補を取り直して、変わっていた時だけ
+  // 見ていた商品の位置を保ったまま反映する。作り直し中だった場合はその完了を確認する。
+  function onReturnToApp(){
+    if (!appPassword) return;
+    const now = Date.now();
+    if (now - lastReturnAt < 1000) return; // visibilitychangeとpageshowが続けて来た時の重複を防ぐ
+    lastReturnAt = now;
+    if (pendingRun){ startPolling(); return; }
+    if (loadState === 'loading') return;
+    if (loadState === 'ready') render();
+    loadCandidates({ silent: true });
+  }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && appPassword) {
-      loadCandidates();
-    }
+    if (document.visibilityState === 'visible') onReturnToApp();
   });
   window.addEventListener('pageshow', (event) => {
-    if (event.persisted && appPassword) {
-      loadCandidates();
-    }
+    if (event.persisted) onReturnToApp();
   });
 </script>
 </body>
