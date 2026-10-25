@@ -375,7 +375,7 @@
   // アプリを開いた時にGAS側のバージョンが違っていれば、GASに「GitHub上の最新Code.gsで
   // 本体を取り込み直して」と依頼する。これにより、index.htmlとCode.gsをGitHubにアップロードする
   // だけで、GASエディタでの貼り付け・デプロイが不要になる（GAS側のローダー参照）。
-  const EXPECTED_CODE_VERSION = '2026-10-11.3';
+  const EXPECTED_CODE_VERSION = '2026-10-25.1';
 
   // ------------------------------------------------------------------
   // アクセス制御（要件定義9章）。GAS側のACCESS_PASSWORDと照合する簡易パスワード。
@@ -573,7 +573,9 @@
       return; // 中身が変わっていなければ描き直さない（見ている画面がチラつかないように）
     }
     lastRawSig = rawSig;
-    const list = (data.candidates || []).map(mapCandidate);
+    // まだGASに届いていない投稿済み・見送りの商品は、一覧に出さない
+    const pendingIds = new Set(loadPendingMarks().map(m => m.itemId));
+    const list = (data.candidates || []).map(mapCandidate).filter(c => !pendingIds.has(c.id));
     if (opts.keepPosition){
       const current = CANDIDATES[state.index];
       CANDIDATES = list;
@@ -1256,55 +1258,78 @@
     }, 2200);
   }
 
-  // GAS Web App に投稿完了を記録する（PropertiesService側の「投稿済みIDリスト」に追加される）。
-  // 実際の投稿そのものはこのアプリ上では行わない（Instagram／Xアプリ側で自分の手で行う）。
-  // 通信に失敗しても、画面上の操作自体は止めない（次回の抽出で重複する可能性はあるが、
-  // 操作不能になるよりはましなため。失敗時はトーストで知らせる）。
-  async function markPostedOnServer(id){
+  // 投稿済み・見送りの記録をGASに送る（2026-10-25作り直し）。
+  // 以前は押した瞬間に1回送るだけだったため、押してすぐ他のアプリに切り替える・画面を
+  // ロックするなどで通信が途中で切れると記録されず、翌日以降に同じ商品がまた出てくる
+  // ことがあった。今は記録を一度この端末に保存し（ig_pending_marks）、GASが受け取ったと
+  // 確認できた時点で消す。失敗した分は、アプリを開いた時・戻ってきた時に自動で送り直す。
+  // 画面を離れても送信が続くよう keepalive を付ける。1件ずつ順番に送る。
+  const PENDING_MARKS_KEY = 'ig_pending_marks';
+  let flushingMarks = false;
+
+  function loadPendingMarks(){
+    try { return JSON.parse(localStorage.getItem(PENDING_MARKS_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function savePendingMarks(list){
+    try { localStorage.setItem(PENDING_MARKS_KEY, JSON.stringify(list)); } catch (e) { /* 無視 */ }
+  }
+
+  function queueMark(action, c){
+    const list = loadPendingMarks().filter(m => m.itemId !== c.id);
+    list.push({ action: action, itemId: c.id, sku: c.sku || '', name: c.name || '', at: Date.now() });
+    savePendingMarks(list);
+    flushPendingMarks();
+  }
+
+  async function sendMark(m){
+    const res = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      keepalive: true,
+      body: JSON.stringify({ action: m.action, itemId: m.itemId, sku: m.sku, name: m.name, pw: appPassword })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error === 'unauthorized') throw new Error('unauthorized');
+    if (!data || data.ok !== true) throw new Error((data && data.error) || 'failed');
+  }
+
+  async function flushPendingMarks(){
+    if (flushingMarks || !appPassword) return;
+    flushingMarks = true;
+    let failedMsg = '';
     try {
-      const res = await fetch(GAS_WEB_APP_URL, {
-        method: 'POST',
-        body: JSON.stringify({ action: 'markPosted', itemId: id, pw: appPassword })
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      if (data && data.error === 'unauthorized'){
-        showToast('パスワードが無効です。画面を開き直してください', 'skip');
+      while (true){
+        const list = loadPendingMarks();
+        if (!list.length) break;
+        const m = list[0];
+        try {
+          await sendMark(m);
+          savePendingMarks(loadPendingMarks().filter(x => !(x.itemId === m.itemId && x.action === m.action)));
+        } catch (err) {
+          failedMsg = String(err && err.message) === 'unauthorized'
+            ? 'パスワードが無効です。画面を開き直してください'
+            : '記録の送信に失敗しました。次にアプリを開いた時に自動で送り直します';
+          break;
+        }
       }
-    } catch (err) {
-      showToast('記録の送信に失敗しました（通信環境を確認してください）', 'skip');
+    } finally {
+      flushingMarks = false;
     }
+    if (failedMsg) showToast(failedMsg, 'skip');
   }
 
   function handlePosted(id){
     state.decisions[id] = { decision: 'posted' };
     showToast('投稿完了として記録しました', 'success');
-    markPostedOnServer(id);
+    queueMark('markPosted', CANDIDATES.find(x => x.id === id) || { id: id });
     setTimeout(() => { state.platform = 'ig'; goNextOrRender(); }, 300);
   }
 
-  // 2026-09-02〜：「見送る」も「投稿完了にする」と同じく、以後この商品を二度と
-  // 候補に出さないようにする（GAS側にmarkSkippedを送ってSKIPPED_IDSへ記録）。
-  async function markSkippedOnServer(id){
-    try {
-      const res = await fetch(GAS_WEB_APP_URL, {
-        method: 'POST',
-        body: JSON.stringify({ action: 'markSkipped', itemId: id, pw: appPassword })
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      if (data && data.error === 'unauthorized'){
-        showToast('パスワードが無効です。画面を開き直してください', 'skip');
-      }
-    } catch (err) {
-      showToast('記録の送信に失敗しました（通信環境を確認してください）', 'skip');
-    }
-  }
-
+  // 2026-09-02〜：「見送る」も「投稿完了にする」と同じく、以後この商品を二度と候補に出さない。
   function handleSkip(id){
     state.decisions[id] = { decision: 'skipped' };
     showToast('見送りました（今後この商品は候補に出ません）', 'skip');
-    markSkippedOnServer(id);
+    queueMark('markSkipped', CANDIDATES.find(x => x.id === id) || { id: id });
     setTimeout(() => { state.platform = 'ig'; goNextOrRender(); }, 300);
   }
 
@@ -1414,6 +1439,7 @@
     if (pendingRun && (!pendingRun.startedAt || Date.now() - pendingRun.startedAt > RUN_TIMEOUT_MS)) setPendingRun(null);
     if (pendingRun) startPolling(); // 作り直しの途中で閉じていた場合は、その完了を待つ
     else loadCandidates();
+    flushPendingMarks(); // 前回送れなかった投稿済み・見送りの記録があれば送り直す
   } else {
     document.getElementById('login-overlay').classList.add('open');
     document.getElementById('login-pw').focus();
@@ -1431,6 +1457,7 @@
     const now = Date.now();
     if (now - lastReturnAt < 1000) return; // visibilitychangeとpageshowが続けて来た時の重複を防ぐ
     lastReturnAt = now;
+    flushPendingMarks();
     if (pendingRun){ startPolling(); return; }
     if (loadState === 'loading') return;
     if (loadState === 'ready') render();
@@ -1442,6 +1469,7 @@
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) onReturnToApp();
   });
+  window.addEventListener('online', () => flushPendingMarks());
 </script>
 </body>
 </html>

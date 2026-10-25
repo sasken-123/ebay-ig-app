@@ -56,7 +56,7 @@ var APPROVAL_APP_URL = 'https://sasken-123.github.io/ebay-ig-app/';
 // 新しくし、承認アプリ（index.html）のEXPECTED_CODE_VERSIONと必ず同じ値にそろえる。
 // アプリを開いた時にこの値が食い違っていると、アプリがローダーに「GitHubの最新Code.gsを
 // 取り込んで」と依頼する。
-var CODE_VERSION = '2026-10-11.3';
+var CODE_VERSION = '2026-10-25.1';
 
 var DEFAULT_SETTINGS = {
   days: 10,
@@ -128,6 +128,87 @@ function grantTriggerPermission() {
 // ===================================================================
 // 投稿済みIDリスト（年ごとにプロパティを分けて9KB制限を回避。要件定義3章）
 // ===================================================================
+// ===================================================================
+// 投稿済み・見送り済みの記録（2026-10-25作り直し）
+//
+// 以前は年ごとに1つのプロパティ（POSTED_IDS_<年> / SKIPPED_IDS_<年>）にIDの配列を入れ、
+// 「読み込む→1件足す→書き戻す」で記録していた。この方式には次の問題があり、
+// 「投稿完了にしたのに翌日以降に同じ商品が出る」原因になっていた：
+//   ① 2件をほぼ同時に記録すると、後から書いた方が先の記録を上書きして1件消える
+//   ② 1つのプロパティは9KBまでのため、件数が増えるといずれ書き込めなくなる
+//   ③ eBayで出品を終了→再出品すると商品番号（ItemID）が変わり、同じ商品と判定できない
+// 今は1件ごとに別のプロパティとして記録する（上書きが起きない）。さらに商品番号に加えて
+// SKUとタイトルでも記録し、どれか1つでも一致すれば「記録済み」として二度と候補に出さない。
+//   DONE_I:<商品番号> / DONE_S:<SKU> / DONE_T:<タイトルのハッシュ>
+// 古い形式（POSTED_IDS_* / SKIPPED_IDS_*）に入っている記録も引き続き読む。
+// ===================================================================
+var DONE_ID_PREFIX = 'DONE_I:';
+var DONE_SKU_PREFIX = 'DONE_S:';
+var DONE_TITLE_PREFIX = 'DONE_T:';
+
+function normalizeSku_(sku) {
+  var s = String(sku || '').trim().toUpperCase();
+  return s.length > 80 ? s.slice(0, 80) : s;
+}
+
+// タイトルは大文字小文字・空白の違いを無視して比べる（長いのでハッシュ化して保存する）
+function titleKey_(title) {
+  var t = String(title || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (t.length < 8) return ''; // 短すぎるタイトルは別商品と重なりやすいので使わない
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, t, Utilities.Charset.UTF_8);
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+}
+
+// 投稿済み・見送り済みとして記録する。kind: 'p'（投稿）| 's'（見送り）
+// sku・titleが渡されない場合は、本日の候補から探して補う。
+function markDone_(itemId, kind, sku, title) {
+  itemId = String(itemId || '').trim();
+  if (!itemId) return;
+  if (!sku || !title) {
+    var found = loadTodayCandidates().filter(function (c) { return String(c.itemId) === itemId; })[0];
+    if (found) {
+      sku = sku || found.sku;
+      title = title || found.name;
+    }
+  }
+  var entries = {};
+  entries[DONE_ID_PREFIX + itemId] = kind;
+  var nsku = normalizeSku_(sku);
+  if (nsku) entries[DONE_SKU_PREFIX + nsku] = kind;
+  var tkey = titleKey_(title);
+  if (tkey) entries[DONE_TITLE_PREFIX + tkey] = kind;
+  PropertiesService.getScriptProperties().setProperties(entries, false);
+}
+
+// 記録済みの一覧を一度にまとめて読み込む（候補選びで何千件もの出品を照合するため、
+// 1件ずつプロパティを読むのではなく、全プロパティを1回で取得して使う）
+function loadDoneIndex_() {
+  var all = PropertiesService.getScriptProperties().getProperties();
+  var idx = { ids: {}, skus: {}, titles: {} };
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf(DONE_ID_PREFIX) === 0) idx.ids[k.slice(DONE_ID_PREFIX.length)] = true;
+    else if (k.indexOf(DONE_SKU_PREFIX) === 0) idx.skus[k.slice(DONE_SKU_PREFIX.length)] = true;
+    else if (k.indexOf(DONE_TITLE_PREFIX) === 0) idx.titles[k.slice(DONE_TITLE_PREFIX.length)] = true;
+    else if (k.indexOf(PROP.POSTED_IDS_PREFIX) === 0 || k.indexOf(PROP.SKIPPED_IDS_PREFIX) === 0) {
+      try {
+        JSON.parse(all[k]).forEach(function (id) { idx.ids[String(id)] = true; });
+      } catch (e) { /* 壊れていれば無視 */ }
+    }
+  });
+  return idx;
+}
+
+// item: { itemId, sku, name }
+function isDone_(idx, item) {
+  if (idx.ids[String(item.itemId)]) return true;
+  var nsku = normalizeSku_(item.sku);
+  if (nsku && idx.skus[nsku]) return true;
+  var tkey = titleKey_(item.name);
+  if (tkey && idx.titles[tkey]) return true;
+  return false;
+}
+
+// 以下は旧形式（年ごとの配列）。読み込みはloadDoneIndex_が行う。新しい記録はmarkDone_で行う。
 function getPostedIds() {
   var year = new Date().getFullYear();
   var raw = PropertiesService.getScriptProperties().getProperty(PROP.POSTED_IDS_PREFIX + year);
@@ -676,9 +757,10 @@ function fetchEbayListings(meta) {
 function filterCandidatePool(listings) {
   var settings = getSettings();
   var now = new Date();
+  var done = loadDoneIndex_();
   return listings.filter(function (item) {
-    if (isPosted(item.itemId)) return false;
-    if (isSkipped(item.itemId)) return false; // 見送り済みも二度と候補に出さない（2026-09-02〜）
+    // 投稿済み・見送り済み（商品番号・SKU・タイトルのどれかが一致）は二度と候補に出さない
+    if (isDone_(done, item)) return false;
     var listedDaysAgo = Math.floor((now - new Date(item.listedDate)) / (1000 * 60 * 60 * 24));
     if (listedDaysAgo > settings.days) return false;
     if (item.views < settings.minViews) return false;
@@ -935,6 +1017,25 @@ function dailyRun(options) {
   return result;
 }
 
+// GAS側のローダーは、取り込んだ本体をA/B2つの枠に交互に保存する。使っていない方の枠は
+// 次の取り込みまで不要なので、毎日の実行のついでに消して保存容量（全体で500KBまで）を空ける
+// （2026-10-25追加）。dailyRunのロック中に呼ぶので、ローダーの取り込みと重なることはない。
+function cleanupInactiveCodeSlot_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty('APP_CODE_ACTIVE');
+    if (!raw) return;
+    var active = JSON.parse(raw);
+    if (active.slot !== 'A' && active.slot !== 'B') return;
+    var other = 'APP_CODE_CHUNK_' + (active.slot === 'A' ? 'B' : 'A') + '_';
+    props.getKeys().forEach(function (k) {
+      if (k.indexOf(other) === 0) props.deleteProperty(k);
+    });
+  } catch (e) {
+    Logger.log('cleanupInactiveCodeSlot_: ' + e);
+  }
+}
+
 function setRunStatus(status) {
   PropertiesService.getScriptProperties().setProperty(PROP.RUN_STATUS, JSON.stringify(status));
 }
@@ -960,6 +1061,7 @@ function getRunStatusForClient() {
 //        または { ok: false, error: 'エラー内容' }
 function dailyRunInner(skipEmail) {
   var props = PropertiesService.getScriptProperties();
+  cleanupInactiveCodeSlot_();
 
   if (isInactiveBeyondThreshold()) {
     if (props.getProperty(PROP.AUTO_STOPPED) !== 'true') {
@@ -1222,8 +1324,9 @@ function doGet(e) {
   // 次回以降のdailyRun/今すぐ実行にしか反映されない）。そのため一度アプリを閉じて
   // 開き直すと、既に投稿済み・見送り済みにしたはずの商品がまた候補として表示されて
   // しまう不具合があった。doGetの時点でも改めて除外するよう修正。
+  var done = loadDoneIndex_();
   var candidates = loadTodayCandidates().filter(function (c) {
-    return !isPosted(c.itemId) && !isSkipped(c.itemId);
+    return !isDone_(done, c);
   });
   // 【2026-09-24追加】枠画像もGAS側に保存しておき、doGetで返すようにした
   // （経緯はsaveFrameImageのコメント参照）。frameDataUrlが空文字の場合は
@@ -1244,11 +1347,11 @@ function doPost(e) {
   recordActivity();
 
   if (body.action === 'markPosted') {
-    addPostedId(body.itemId);
+    markDone_(body.itemId, 'p', body.sku, body.name);
     return jsonResponse({ ok: true });
   }
   if (body.action === 'markSkipped') {
-    addSkippedId(body.itemId);
+    markDone_(body.itemId, 's', body.sku, body.name);
     return jsonResponse({ ok: true });
   }
   if (body.action === 'saveSettings') {
