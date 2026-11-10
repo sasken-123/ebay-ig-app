@@ -56,7 +56,7 @@ var APPROVAL_APP_URL = 'https://sasken-123.github.io/ebay-ig-app/';
 // 新しくし、承認アプリ（index.html）のEXPECTED_CODE_VERSIONと必ず同じ値にそろえる。
 // アプリを開いた時にこの値が食い違っていると、アプリがローダーに「GitHubの最新Code.gsを
 // 取り込んで」と依頼する。
-var CODE_VERSION = '2026-10-25.1';
+var CODE_VERSION = '2026-11-10.1';
 
 var DEFAULT_SETTINGS = {
   days: 10,
@@ -745,8 +745,20 @@ function fetchEbayListings(meta) {
   var viewsMap = fetchViewCounts(itemIds, meta);
   Logger.log('fetchViewCounts: ' + (new Date().getTime() - t1) + 'ms');
 
+  // 【2026-11-10】View数が取れなかった商品（API失敗・回数制限で、過去の値もない）は
+  // viewsUnknownの印を付ける。以前は0扱いになり、「view数◯以上」の条件で全部
+  // 落とされて候補が0件になっていた。印の付いた商品は、view数の条件を付けずに候補にする。
+  meta = meta || {};
+  meta.viewsUnknownCount = 0;
   recentListings.forEach(function (l) {
-    l.views = viewsMap[l.itemId] || 0;
+    if (viewsMap[l.itemId] === undefined) {
+      l.views = 0;
+      l.viewsUnknown = true;
+      meta.viewsUnknownCount++;
+    } else {
+      l.views = viewsMap[l.itemId];
+      l.viewsUnknown = false;
+    }
   });
   return recentListings;
 }
@@ -754,19 +766,31 @@ function fetchEbayListings(meta) {
 // ===================================================================
 // 候補プールの抽出（要件定義4章）
 // ===================================================================
-function filterCandidatePool(listings) {
+// diag（任意）：どの条件で何件落ちたかを書き込む（0件の時に理由をアプリに表示するため。2026-11-10追加）
+function filterCandidatePool(listings, diag) {
   var settings = getSettings();
   var now = new Date();
   var done = loadDoneIndex_();
-  return listings.filter(function (item) {
+  diag = diag || {};
+  diag.recentListings = listings.length;
+  diag.excludedDone = 0;
+  diag.outOfDays = 0;
+  diag.belowMinViews = 0;
+  diag.viewsUnknownInPool = 0;
+  var pool = listings.filter(function (item) {
     // 投稿済み・見送り済み（商品番号・SKU・タイトルのどれかが一致）は二度と候補に出さない
-    if (isDone_(done, item)) return false;
+    if (isDone_(done, item)) { diag.excludedDone++; return false; }
     var listedDaysAgo = Math.floor((now - new Date(item.listedDate)) / (1000 * 60 * 60 * 24));
-    if (listedDaysAgo > settings.days) return false;
-    if (item.views < settings.minViews) return false;
+    if (listedDaysAgo > settings.days) { diag.outOfDays++; return false; }
+    if (!item.viewsUnknown && item.views < settings.minViews) { diag.belowMinViews++; return false; }
+    if (item.viewsUnknown) diag.viewsUnknownInPool++;
     item._listedDaysAgo = listedDaysAgo;
     return true;
   });
+  diag.pool = pool.length;
+  diag.days = settings.days;
+  diag.minViews = settings.minViews;
+  return pool;
 }
 
 // ===================================================================
@@ -779,8 +803,13 @@ function selectCandidatesByGenreRoundRobin(pool, count) {
     if (!groups[genre]) groups[genre] = [];
     groups[genre].push(item);
   });
+  // View数が分かる商品をview数の多い順に、分からない商品（API失敗時）はその後に新しい出品順に並べる
   Object.keys(groups).forEach(function (g) {
-    groups[g].sort(function (a, b) { return b.views - a.views; });
+    groups[g].sort(function (a, b) {
+      if (!!a.viewsUnknown !== !!b.viewsUnknown) return a.viewsUnknown ? 1 : -1;
+      if (a.viewsUnknown) return new Date(b.listedDate) - new Date(a.listedDate);
+      return b.views - a.views;
+    });
   });
 
   var genreOrder = Object.keys(groups).sort(function (a, b) {
@@ -870,7 +899,15 @@ function callClaude(prompt, maxTokens) {
     muteHttpExceptions: true,
   };
   var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', options);
-  var json = JSON.parse(res.getContentText());
+  var text = res.getContentText();
+  var json = {};
+  try { json = JSON.parse(text); } catch (e) { /* 下でエラー扱い */ }
+  // 【2026-11-10】以前はAPIエラー（残高不足・キー無効など）でも黙って空文字を返していたため、
+  // 原因が分からなかった。エラー内容を投げて、呼び出し側で警告として記録する。
+  if (res.getResponseCode() >= 300 || json.type === 'error') {
+    var msg = (json.error && json.error.message) ? json.error.message : text.slice(0, 200);
+    throw new Error('Claude API（' + res.getResponseCode() + '）: ' + msg);
+  }
   return (json.content && json.content[0]) ? json.content[0].text : '';
 }
 
@@ -929,7 +966,13 @@ function fitXBody(text, itemName, hashtags) {
       '"?", and do not add any new facts. Plain text only: no hashtags, no quotation marks, no line breaks, ' +
       'no emojis, no em dashes. Return ONLY the rewritten text.\n\nProduct: ' + itemName +
       '\nText to rewrite:\n' + current;
-    var rewritten = (callClaude(prompt, 300) || '').trim().replace(/^["']|["']$/g, '');
+    var rewritten = '';
+    try {
+      rewritten = (callClaude(prompt, 300) || '').trim().replace(/^["']|["']$/g, '');
+    } catch (e) {
+      Logger.log('fitXBody: 書き直しに失敗したため文の区切りで調整します: ' + e);
+      break;
+    }
     if (rewritten) current = rewritten;
   }
   if (xWeightedLength(current) > budget) {
@@ -1009,6 +1052,8 @@ function dailyRun(options) {
       finishedAt: Date.now(),
       count: result && result.count,
       poolSize: result && result.poolSize,
+      diag: (result && result.diag) || null,
+      warnings: (result && result.warnings) || [],
       error: (result && result.error) || '',
     });
     lock.releaseLock();
@@ -1083,8 +1128,9 @@ function dailyRunInner(skipEmail) {
   try {
     var settings = getSettings();
     var listings = fetchEbayListings(meta);
-    var pool = filterCandidatePool(listings);
-    Logger.log('候補プール（未投稿・view条件クリア）: ' + pool.length + '件');
+    var diag = {};
+    var pool = filterCandidatePool(listings, diag);
+    Logger.log('候補プール（未投稿・view条件クリア）: ' + pool.length + '件 ' + JSON.stringify(diag));
     var candidates = selectCandidatesByGenreRoundRobin(pool, settings.count);
     Logger.log('選出した候補: ' + candidates.length + '件');
 
@@ -1096,7 +1142,15 @@ function dailyRunInner(skipEmail) {
       if (details.pictureUrl) c.imageUrl = details.pictureUrl; // 一覧取得時の小さいサムネイルをフルサイズ画像に差し替え
       // 出品URLの短縮（shortenUrl）は2026-09-05に「eBayへのリンクは短縮しないでほしい」との
       // 要望を受けて廃止した。関数自体は将来また必要になった場合のために残してある。
-      var material = summarizeWithClaude(c.description, c.name, c.categoryName);
+      var material;
+      try {
+        material = summarizeWithClaude(c.description, c.name, c.categoryName);
+      } catch (aiErr) {
+        // AIの文章作成だけが失敗しても、候補そのものは出す（文章は空。警告として知らせる）
+        meta.aiError = (aiErr && aiErr.message) ? aiErr.message : String(aiErr);
+        Logger.log('AI文章作成に失敗: ' + meta.aiError);
+        material = { hook: '', recommendPoint: '', hashtags: [] };
+      }
       c.hook = material.hook;
       c.recommendPoint = material.recommendPoint;
       c.hashtags = material.hashtags;
@@ -1104,6 +1158,7 @@ function dailyRunInner(skipEmail) {
     Logger.log('説明取得+AI要約: ' + (new Date().getTime() - t2) + 'ms');
 
     saveTodayCandidates(candidates);
+    meta.warnings = buildRunWarnings_(meta, diag);
     // 通知メールの送信に失敗しても、候補の保存自体は済んでいるので処理全体は成功扱いにする
     // （以前はここで例外になると、候補は更新されているのにエラー扱いになっていた）。
     if (!skipEmail) {
@@ -1114,7 +1169,7 @@ function dailyRunInner(skipEmail) {
       }
     }
     Logger.log('dailyRun完了' + (meta.quotaIssue ? '（View数取得は一部制限あり／過去値で代用=' + meta.usedFallback + '）' : ''));
-    return { ok: true, count: candidates.length, poolSize: pool.length };
+    return { ok: true, count: candidates.length, poolSize: pool.length, diag: diag, warnings: meta.warnings };
   } catch (e) {
     Logger.log('dailyRunが失敗しました: ' + e);
     try {
@@ -1124,6 +1179,24 @@ function dailyRunInner(skipEmail) {
     }
     return { ok: false, error: (e && e.message) ? e.message : String(e) };
   }
+}
+
+// 実行結果に付ける注意書き（アプリとメールに表示する。2026-11-10追加）
+function buildRunWarnings_(meta, diag) {
+  var w = [];
+  if (meta.quotaIssue) {
+    w.push('eBayのView数（Analytics API）が取得できませんでした' +
+      (meta.viewsUnknownCount ? '。View数が分からない' + meta.viewsUnknownCount + '件は、view数の条件なしで新しい出品から選んでいます' : '') +
+      '（' + String(meta.quotaIssue).slice(0, 160) + '）');
+  }
+  if (meta.aiError) {
+    w.push('AIの投稿文作成に失敗したため、本文が空の候補があります（' + String(meta.aiError).slice(0, 160) + '）。' +
+      'Claude APIの残高やAPIキーを確認してください');
+  }
+  if (diag && diag.recentListings === 0) {
+    w.push('eBayから直近' + diag.days + '日以内の出品が1件も取得できませんでした');
+  }
+  return w;
 }
 
 // 【2026-09-10修正】CacheServiceは最大6時間（21600秒）までしか保持できない仕様のため、
@@ -1275,7 +1348,9 @@ function sendDailyNotificationEmail(count, meta) {
   MailApp.sendEmail(email, '【投稿候補チェック】本日の候補が' + count + '件あります',
     '📦 本日の投稿候補が' + count + '件見つかりました！\n\n' +
     '👉 こちらから承認アプリを開いて確認してください：\n' + APPROVAL_APP_URL +
-    note);
+    note + ((meta && meta.aiError)
+      ? '\n\n⚠️ AIの投稿文作成に失敗しました（本文が空の候補があります）。Claude APIの残高やAPIキーを確認してください。\n詳細: ' + meta.aiError
+      : ''));
 }
 
 // dailyRunが例外で止まってしまった時に、症状（承認アプリが0/0のまま）だけでなく

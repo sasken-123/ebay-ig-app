@@ -114,6 +114,11 @@
   .empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--ink-soft);border:1px dashed var(--line);border-radius:8px;}
   .empty-state .big{font-size:28px;margin-bottom:4px;}
   .empty-state p{font-size:12.5px;margin:0;}
+  .empty-state .diag{margin-top:10px;font-size:11.5px;line-height:1.6;text-align:left;background:var(--gray-bg);border-radius:6px;padding:8px 10px;color:var(--ink);}
+  /* 前回の候補作成のエラー・注意（2026-11-10追加）。タップで全文表示 */
+  .run-notice{flex:0 0 auto;margin:0 0 6px;padding:6px 9px;border-radius:6px;background:#fff4e0;color:#7a4a00;border:1px solid #f0d29c;font-size:11px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer;word-break:break-all;}
+  .run-notice.error{background:#fdecec;color:#8a1f1f;border-color:#f1b9b9;}
+  .run-notice.expanded{display:block;-webkit-line-clamp:unset;}
 
   #toast-wrap{position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:6px;align-items:center;width:calc(100% - 24px);max-width:456px;}
   .toast{background:var(--ink);color:#fff;padding:9px 14px;border-radius:6px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,0.25);opacity:0;transform:translateY(-8px);transition:opacity .2s ease, transform .2s ease;text-align:center;}
@@ -176,6 +181,8 @@
       <button class="gear-btn" onclick="openSettings()" title="抽出条件を変更">⚙️</button>
     </div>
   </div>
+
+  <div id="run-notice" class="run-notice" hidden onclick="this.classList.toggle('expanded')"></div>
 
   <div class="stage">
     <div class="card-wrap" id="card-wrap">
@@ -375,7 +382,7 @@
   // アプリを開いた時にGAS側のバージョンが違っていれば、GASに「GitHub上の最新Code.gsで
   // 本体を取り込み直して」と依頼する。これにより、index.htmlとCode.gsをGitHubにアップロードする
   // だけで、GASエディタでの貼り付け・デプロイが不要になる（GAS側のローダー参照）。
-  const EXPECTED_CODE_VERSION = '2026-10-25.1';
+  const EXPECTED_CODE_VERSION = '2026-11-10.1';
 
   // ------------------------------------------------------------------
   // アクセス制御（要件定義9章）。GAS側のACCESS_PASSWORDと照合する簡易パスワード。
@@ -424,6 +431,7 @@
   let polling = false;
   let loadSeq = 0;          // 読み込みの通し番号（古い読み込み結果で新しい表示を上書きしないため）
   let lastRawSig = '';      // 前回読み込んだ候補データ（変化がなければ描き直さないため）
+  let lastRunStatus = {};   // GAS側の直近の候補作成の結果（エラー・注意・0件の理由の表示用。2026-11-10追加）
   let lastReturnAt = 0;
 
   // GASの doGet が返す候補（itemId/name/price/categoryName/imageUrl/itemUrl/description/views/
@@ -568,6 +576,8 @@
       renderFramePreview();
     }
 
+    lastRunStatus = data.runStatus || {};
+    renderRunNotice();
     const rawSig = JSON.stringify(data.candidates || []);
     if (opts.keepPosition && loadState === 'ready' && rawSig === lastRawSig){
       return; // 中身が変わっていなければ描き直さない（見ている画面がチラつかないように）
@@ -730,6 +740,9 @@
       }
     } else {
       showToast('作り直しでエラーが発生しました: ' + (st.error || '不明なエラー'), 'skip');
+    }
+    if (st.state === 'done' && Array.isArray(st.warnings) && st.warnings.length){
+      setTimeout(() => showToast('注意があります。画面上部の黄色い表示を確認してください', 'skip'), 2500);
     }
     if (data) applyCandidatesData(data, {});
     else await loadCandidates();
@@ -1217,7 +1230,7 @@
       // この画面で投稿済み・見送りにした結果0件になった場合と、最初から0件の場合で文言を分ける
       document.getElementById('card-wrap').innerHTML = Object.keys(state.decisions).length > 0
         ? `<div class="empty-state"><div class="big">✅</div><p>すべての候補を確認しました。<br>お疲れさまでした。<br>🔄で新しい候補を作り直せます。</p></div>`
-        : `<div class="empty-state"><div class="big">📭</div><p>本日の候補はありません。<br>条件（出品${settings.days}日以内・${settings.minViews}view以上）に合う<br>未投稿の商品が見つかりませんでした。<br>🔄で作り直すか、⚙️で条件を緩めてみてください。</p></div>`;
+        : `<div class="empty-state"><div class="big">📭</div><p>本日の候補はありません。<br>条件（出品${settings.days}日以内・${settings.minViews}view以上）に合う<br>未投稿の商品が見つかりませんでした。<br>🔄で作り直すか、⚙️で条件を緩めてみてください。</p>${diagHtml()}</div>`;
       renderDots();
       return;
     }
@@ -1236,6 +1249,41 @@
     }
 
     renderDots();
+  }
+
+  // 0件だった時に、どの段階で何件に絞られたかを表示する（2026-11-10追加）
+  function diagHtml(){
+    const st = lastRunStatus || {};
+    const d = st.diag;
+    if (!d || st.state !== 'done') return '';
+    const lines = [
+      '直近' + d.days + '日以内のeBay出品：' + d.recentListings + '件',
+      'うち投稿済み・見送り済み：' + d.excludedDone + '件'
+    ];
+    if (d.outOfDays) lines.push('出品から' + d.days + '日を過ぎたもの：' + d.outOfDays + '件');
+    lines.push('view数' + d.minViews + '未満：' + d.belowMinViews + '件');
+    lines.push('→ 候補にできる商品：' + d.pool + '件');
+    return '<div class="diag">' + lines.join('<br>') + '</div>';
+  }
+
+  // 直近の候補作成でエラーや注意があれば、画面上部に表示する（20時間以内のもののみ）
+  function renderRunNotice(){
+    const el = document.getElementById('run-notice');
+    if (!el) return;
+    const st = lastRunStatus || {};
+    const recent = st.finishedAt && (Date.now() - st.finishedAt < 20 * 60 * 60 * 1000);
+    let text = '';
+    let isError = false;
+    if (recent && st.state === 'error' && st.error){
+      text = '⚠️ 前回の候補作成でエラーが発生しました：' + st.error;
+      isError = true;
+    } else if (recent && Array.isArray(st.warnings) && st.warnings.length){
+      text = '⚠️ ' + st.warnings.join(' ／ ');
+    }
+    el.textContent = text;
+    el.classList.toggle('error', isError);
+    el.classList.remove('expanded');
+    el.hidden = !text;
   }
 
   function goNext(){
